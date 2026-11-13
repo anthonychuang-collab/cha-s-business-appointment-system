@@ -37,10 +37,17 @@ function settingsTx<T>(fn: (q: Q, ref: Ref) => Promise<T>): Promise<T> {
  * - preview：只用尚未儲存的新班表計算受影響預約，不寫入
  * - commit：取班表獨占鎖（此時沒有預約在寫入）→ 重新讀取並驗證 → 寫入 → 重算衝突，全部在同一交易
  */
+/** 班表類異動的計畫：新班表（供預覽）、寫入方式、操作紀錄內容 */
+interface SchedulePlan {
+  next: ScheduleData;
+  write: (q: Q) => Promise<void>;
+  log: { entityType: "schedule" | "doctor"; entityId: string; action: string; changes: Record<string, unknown> };
+}
+
 async function scheduleChange(
   actor: UserAccount,
   commit: boolean,
-  build: (ref: Ref) => { next: ScheduleData; write: (q: Q) => Promise<void>; what: string } | { error: string },
+  build: (ref: Ref) => SchedulePlan | { error: string },
 ): Promise<ScheduleOutcome> {
   if (!commit) {
     const q = sql();
@@ -55,10 +62,20 @@ async function scheduleChange(
     const plan = build(await repo.loadRef(q));
     if ("error" in plan) return { ok: false, message: plan.error };
     await plan.write(q);
-    await log(q, actor, "schedule", plan.what, "update");
+    await log(q, actor, plan.log.entityType, plan.log.entityId, plan.log.action, plan.log.changes);
     return { ok: true, phase: "saved", changed: await applyConflictRecompute(q, await repo.loadRef(q), actor) };
   });
 }
+
+// ---------- 操作紀錄用的文字（記錄當下的名稱，之後改名也看得懂） ----------
+
+const WEEKDAY = ["", "週一", "週二", "週三", "週四", "週五", "週六", "週日"];
+const doctorLabel = (ref: Ref, id: string | null) => ref.doctors.find((d) => d.id === id)?.displayName ?? "（已刪除醫師）";
+const range = (from: string, to: string | null) => (to ? `${from}～${to}` : `${from} 起`);
+const shiftText = (ref: Ref, x: Omit<DoctorShiftRow, "id">) => `${doctorLabel(ref, x.doctorId)} ${WEEKDAY[x.weekday]} ${x.start}–${x.end}（${range(x.effectiveFrom, x.effectiveTo)}）`;
+const blockText = (ref: Ref, b: BlockRow) =>
+  `${b.scope === "clinic" ? "全院封鎖" : `${doctorLabel(ref, b.doctorId)} 請假`} ${b.specificDate ?? `每${WEEKDAY[b.weekday ?? 0]}`} ${b.start}–${b.end}：${b.reason}`;
+const openingText = (o: Pick<OpeningRow, "weekdays" | "start" | "end">) => `${o.weekdays.map((w) => WEEKDAY[w]).join("、")} ${o.start}–${o.end}`;
 
 // ---------- 醫師與班表 ----------
 
@@ -72,17 +89,28 @@ export function saveShift(actor: UserAccount, commit: boolean, s: Omit<DoctorShi
     if (!ref.doctors.some((d) => d.id === s.doctorId)) return { error: "找不到醫師。" };
     if (s.id && !ref.shifts.some((x) => x.id === s.id)) return { error: "找不到班表。" };
     const row: DoctorShiftRow = { ...s, id };
+    const before = s.id ? ref.shifts.find((x) => x.id === s.id) : undefined;
     const shifts = s.id ? ref.shifts.map((x) => (x.id === s.id ? row : x)) : [...ref.shifts, row];
-    return { next: { ...scheduleData(ref), doctorShifts: shifts }, write: (q) => repo.upsertShift(q, row), what: id };
+    return {
+      next: { ...scheduleData(ref), doctorShifts: shifts }, write: (q) => repo.upsertShift(q, row),
+      log: {
+        entityType: "schedule", entityId: id, action: before ? "shift-update" : "shift-create",
+        changes: before ? { detail: { from: shiftText(ref, before), to: shiftText(ref, row) } } : { detail: shiftText(ref, row) },
+      },
+    };
   });
 }
 
 export function removeShift(actor: UserAccount, commit: boolean, id: string): Promise<ScheduleOutcome> {
-  return scheduleChange(actor, commit, (ref) => ({
-    next: { ...scheduleData(ref), doctorShifts: ref.shifts.filter((x) => x.id !== id) },
-    write: (q) => repo.deleteShift(q, id),
-    what: id,
-  }));
+  return scheduleChange(actor, commit, (ref) => {
+    const before = ref.shifts.find((x) => x.id === id);
+    if (!before) return { error: "找不到班表。" };
+    return {
+      next: { ...scheduleData(ref), doctorShifts: ref.shifts.filter((x) => x.id !== id) },
+      write: (q) => repo.deleteShift(q, id),
+      log: { entityType: "schedule", entityId: id, action: "shift-delete", changes: { detail: shiftText(ref, before) } },
+    };
+  });
 }
 
 export function saveDoctor(actor: UserAccount, commit: boolean, d: { id?: string; displayName: string; active: boolean }): Promise<ScheduleOutcome> {
@@ -91,8 +119,15 @@ export function saveDoctor(actor: UserAccount, commit: boolean, d: { id?: string
   return scheduleChange(actor, commit, (ref) => {
     if (d.id && !ref.doctors.some((x) => x.id === d.id)) return { error: "找不到醫師。" };
     const row: Doctor = { id, displayName: d.displayName.trim(), active: d.active };
+    const before = d.id ? ref.doctors.find((x) => x.id === d.id) : undefined;
     const doctors = d.id ? ref.doctors.map((x) => (x.id === d.id ? row : x)) : [...ref.doctors, row];
-    return { next: { ...scheduleData(ref), doctors }, write: (q) => repo.upsertDoctor(q, row), what: d.id ?? "new-doctor" };
+    const changes: Record<string, unknown> = {};
+    if (!before || before.displayName !== row.displayName) changes.displayName = before ? { from: before.displayName, to: row.displayName } : row.displayName;
+    if (!before || before.active !== row.active) changes.active = before ? { from: before.active, to: row.active } : row.active;
+    return {
+      next: { ...scheduleData(ref), doctors }, write: (q) => repo.upsertDoctor(q, row),
+      log: { entityType: "doctor", entityId: id, action: before ? "doctor-update" : "doctor-create", changes },
+    };
   });
 }
 
@@ -108,13 +143,23 @@ export function saveBlock(actor: UserAccount, commit: boolean, b: Omit<BlockRow,
   const row: BlockRow = { ...b, reason: b.reason.trim(), id: repo.newId(), effectiveFrom: todayTaipei(), effectiveTo: null, active: true };
   return scheduleChange(actor, commit, (ref) => {
     if (b.doctorId && !ref.doctors.some((d) => d.id === b.doctorId)) return { error: "找不到醫師。" };
-    return { next: { ...scheduleData(ref), blocks: [...ref.blocks, row] }, write: (q) => repo.insertBlock(q, row), what: row.id };
+    return {
+      next: { ...scheduleData(ref), blocks: [...ref.blocks, row] }, write: (q) => repo.insertBlock(q, row),
+      log: { entityType: "schedule", entityId: row.id, action: "block-create", changes: { detail: blockText(ref, row) } },
+    };
   });
 }
 
 export function removeBlock(actor: UserAccount, id: string): Promise<ScheduleOutcome> {
   // 移除封鎖只會讓預約變得符合規則，不需預覽
-  return scheduleChange(actor, true, (ref) => ({ next: scheduleData(ref), write: (q) => repo.deleteBlock(q, id), what: id }));
+  return scheduleChange(actor, true, (ref) => {
+    const before = ref.blocks.find((x) => x.id === id);
+    if (!before) return { error: "找不到封鎖或請假紀錄。" };
+    return {
+      next: scheduleData(ref), write: (q) => repo.deleteBlock(q, id),
+      log: { entityType: "schedule", entityId: id, action: "block-delete", changes: { detail: blockText(ref, before) } },
+    };
+  });
 }
 
 export function saveOpening(actor: UserAccount, commit: boolean, o: { weekdays: number[]; start: string; end: string }): Promise<ScheduleOutcome> {
@@ -123,7 +168,11 @@ export function saveOpening(actor: UserAccount, commit: boolean, o: { weekdays: 
   const weekdays = [...new Set(o.weekdays)].filter((w) => Number.isInteger(w) && w >= 1 && w <= 7).sort();
   return scheduleChange(actor, commit, (ref) => {
     const row: OpeningRow = { id: ref.openings[0]?.id ?? repo.newId(), weekdays, start: o.start, end: o.end, effectiveFrom: "2000-01-01", effectiveTo: null };
-    return { next: { ...scheduleData(ref), openings: [row] }, write: (q) => repo.replaceOpening(q, row), what: "opening" };
+    const before = ref.openings[0];
+    return {
+      next: { ...scheduleData(ref), openings: [row] }, write: (q) => repo.replaceOpening(q, row),
+      log: { entityType: "schedule", entityId: "opening", action: "opening-update", changes: { detail: before ? { from: openingText(before), to: openingText(row) } : openingText(row) } },
+    };
   });
 }
 
@@ -148,6 +197,7 @@ export function updateItem(actor: UserAccount, id: string, patch: { name?: strin
     const i = items.findIndex((x) => x.id === id);
     if (i < 0) return { ok: false, message: "找不到項目。" };
     const item = items[i];
+    const before = { ...item };
     if (patch.name !== undefined) {
       if (!patch.name.trim()) return { ok: false, message: "名稱不可空白。" };
       if (items.some((x) => x.id !== id && x.name === patch.name!.trim())) return { ok: false, message: "已有同名項目。" };
@@ -163,16 +213,22 @@ export function updateItem(actor: UserAccount, id: string, patch: { name?: strin
       }
     }
     for (const t of touched) await repo.updateItemRow(q, t);
-    await log(q, actor, "item", id, "update", patch);
+    const changes: Record<string, unknown> = { name: item.name };
+    if (before.name !== item.name) changes.name = { from: before.name, to: item.name };
+    if (before.active !== item.active) changes.active = { from: before.active, to: item.active };
+    if (patch.move && touched.length > 1) changes.order = patch.move < 0 ? "往前移" : "往後移";
+    await log(q, actor, "item", id, "update", changes);
     return { ok: true };
   });
 }
 
 export function deleteItem(actor: UserAccount, id: string): Promise<Simple> {
-  return settingsTx(async (q): Promise<Simple> => {
+  return settingsTx(async (q, ref): Promise<Simple> => {
+    const item = ref.items.find((i) => i.id === id);
+    if (!item) return { ok: false, message: "找不到項目。" };
     if ((await repo.itemsInUse(q)).has(id)) return { ok: false, message: "此項目已被預約使用，只能停用不能刪除。" };
     await repo.deleteItemRow(q, id);
-    await log(q, actor, "item", id, "delete");
+    await log(q, actor, "item", id, "delete", { name: item.name });
     return { ok: true };
   });
 }
@@ -187,7 +243,14 @@ export function saveSettings(actor: UserAccount, s: { maxDays: number; notifyEma
     const modes = Object.values(s.notifyModes);
     if (modes.some((m) => !["instant", "digest", "none"].includes(m))) return { ok: false, message: "通知方式不正確。" };
     await repo.saveSettingsRows(q, { ...ref.settings, ...s }, actor.id);
-    await log(q, actor, "settings", "settings", "update", { maxDays: s.maxDays, notifyEmails: s.notifyEmails.length, notifyModes: s.notifyModes });
+    const before = ref.settings;
+    const changes: Record<string, unknown> = {};
+    if (before.maxDays !== s.maxDays) changes.maxDays = { from: before.maxDays, to: s.maxDays };
+    if (before.notifyEmails.join(",") !== s.notifyEmails.join(",")) changes.notifyEmails = { from: before.notifyEmails.join("、") || "（無）", to: s.notifyEmails.join("、") || "（無）" };
+    for (const [event, mode] of Object.entries(s.notifyModes) as [NotifyEvent, NotifyMode][]) {
+      if (before.notifyModes[event] !== mode) changes[`notifyMode.${event}`] = { from: before.notifyModes[event], to: mode };
+    }
+    await log(q, actor, "settings", "settings", "update", changes);
     return { ok: true };
   });
 }
@@ -211,7 +274,7 @@ export function createAccount(actor: UserAccount, v: { displayName: string; logi
         sortOrder: Math.max(0, ...ref.salespeople.map((s) => s.sortOrder)) + 1, userAccountId: user.id,
       });
     }
-    await log(q, actor, "account", user.id, "create", { loginName: user.loginName, role: user.role });
+    await log(q, actor, "account", user.id, "create", { name: user.displayName, loginName: user.loginName, role: user.role });
     return { ok: true };
   });
 }
@@ -234,7 +297,7 @@ export function setAccountActive(actor: UserAccount, id: string, active: boolean
     if (u.role === "sales" && sp) await repo.setSalespersonActive(q, sp.id, active);
     await repo.setUserActive(q, u.id, active);
     if (!active) await revokeSessions(q, u.id); // 停用立即踢出
-    await log(q, actor, "account", u.id, active ? "activate" : "deactivate");
+    await log(q, actor, "account", u.id, active ? "activate" : "deactivate", { name: u.displayName });
     return { ok: true };
   });
 }
@@ -246,7 +309,7 @@ export function resetPassword(actor: UserAccount, id: string, password: string):
     if (!u) return { ok: false, message: "找不到帳號。" };
     await repo.setPasswordHash(q, u.id, hashPassword(password));
     await revokeSessions(q, u.id);
-    await log(q, actor, "account", u.id, "reset-password"); // 不記錄密碼或雜湊
+    await log(q, actor, "account", u.id, "reset-password", { name: u.displayName }); // 不記錄密碼或雜湊
     return { ok: true };
   });
 }
@@ -260,7 +323,8 @@ export function transferFutureAppointments(actor: UserAccount, fromSalespersonId
     if (!ref.salespeople.some((s) => s.id === fromSalespersonId)) return { ok: false as const, message: "找不到原業務。" };
     if (!ref.salespeople.some((s) => s.id === toSalespersonId && s.active)) return { ok: false as const, message: "請選擇啟用中的業務。" };
     const n = await repo.transferFuture(q, fromSalespersonId, toSalespersonId, todayTaipei(), actor.id);
-    await log(q, actor, "salesperson", fromSalespersonId, "transfer", { to: toSalespersonId, count: n });
+    const spName = (sid: string) => ref.salespeople.find((x) => x.id === sid)?.displayName ?? "—";
+    await log(q, actor, "salesperson", fromSalespersonId, "transfer", { salesperson: { from: spName(fromSalespersonId), to: spName(toSalespersonId) }, count: n });
     return { ok: true as const, count: n };
   });
 }

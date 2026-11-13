@@ -26,13 +26,14 @@ describe("describeChanges", () => {
       status: { from: "active", to: "cancelled" },
       partySize: { from: 2, to: 3 },
     }, names);
+    // 依固定欄位順序，不受傳入順序（或 jsonb 存取後的順序）影響
     expect(lines).toEqual([
       { label: "項目", from: "療程諮詢", to: "疫苗" },
+      { label: "人數", from: "2 人", to: "3 人" },
       { label: "醫師需求", from: "需醫師", to: "僅護理師" },
       { label: "安排醫師", from: "廖醫師", to: "—" },
       { label: "負責業務", from: "業務甲", to: "業務乙" },
       { label: "狀態", from: "已預約", to: "已取消" },
-      { label: "人數", from: "2 人", to: "3 人" },
     ]);
   });
 

@@ -11,8 +11,8 @@ Next.js 16（App Router）＋ TypeScript。
 npm install
 cp .env.example .env.local   # 填 DATABASE_URL（本機開發用 localhost 的資料庫）
 npm run dev                  # http://localhost:3000；本機資料庫會自動 migrate 並建立測試帳號
-npm test                     # 143 個規則與信件內容單元測試（有設 TEST_DATABASE_URL 時另跑 39 個資料庫整合測試）
-npm run test:db              # 讀 .env.local 的 TEST_DATABASE_URL，跑全部 182 個測試
+npm test                     # 148 個規則、信件與紀錄格式單元測試（有設 TEST_DATABASE_URL 時另跑 45 個資料庫整合測試）
+npm run test:db              # 讀 .env.local 的 TEST_DATABASE_URL，跑全部 193 個測試
 npm run typecheck
 npm run build
 ```
@@ -50,7 +50,8 @@ npm run build
 | `/admin/schedule` | 店長 | 醫師、班表、請假／封鎖（先預覽受影響預約再儲存） |
 | `/admin/options` | 店長 | 項目（新增、改名、排序、停用、刪除）、營業時間、最遠天數、通知設定 |
 | `/admin/users` | 店長 | 帳號、停用（會踢出登入）、重設密碼、業務離職轉出、代理啟停、最後店長保護 |
-| `/admin/notifications` | 店長、代理 | 通知清單 |
+| `/admin/notifications` | 店長、代理 | 通知清單、即時信與日報的寄送狀態、重新寄送 |
+| `/admin/audit` | 店長 | 操作紀錄查詢：日期（台北時間）、對象、動作、操作者、關鍵字（預約編號、客戶、原因、內容）；唯讀、每頁 50 筆 |
 
 ## 程式結構
 
@@ -64,6 +65,7 @@ supabase/migrations 資料表與初始設定（RLS 全開、不給任何 policy�
 scripts/db.mjs      migrate / seed-dev / reset / create-admin
 src/lib/notify/     Email 通知：內容（email.ts，純函式）、寄送與重試（deliver.ts）、Resend／開發用寄信（transport.ts）
 src/app/api/cron/   每日排程端點（日報＋補寄），受 CRON_SECRET 保護
+src/lib/audit-format.ts  操作紀錄的中文顯示（動作名稱、異動內容），有單元測試
 tests/integration/  資料庫整合測試：同時段鎖位、冪等、版本衝突、預約編號、班表重算、登入鎖定、第一位店長初始化、即時信寄送與重試、每日日報
 src/app/            頁面與 Server Actions（每個 action 都在伺服器端重新檢查角色）
 tests/e2e/          Playwright 完整操作測試（python3 tests/e2e/booking_flow.py http://localhost:3000 輸出資料夾）
@@ -140,12 +142,11 @@ tests/e2e/          Playwright 完整操作測試（python3 tests/e2e/booking_fl
 
 ## 尚未完成
 
-- 操作紀錄的獨立查詢頁（目前只在預約詳情顯示該筆的紀錄）。
 - 正式環境的備份與還原。
 
 ## 已驗證
 
-- `npm test`：143 個規則與信件內容測試全部通過；接上測試資料庫時 39 個整合測試也全部通過（共 182）。
+- `npm test`：148 個規則、信件與紀錄格式測試全部通過；接上測試資料庫時 45 個整合測試也全部通過（共 193）。
 - `tests/e2e/booking_flow.py`：接 PostgreSQL 後以桌面 1280px 與手機 390px 實際操作，20 項檢查全部通過，包括：
   - 錯誤帳密的提示，業務直接輸入 `/admin` 會被導回首頁。
   - 欄位錯誤顯示，上一步返回時資料保留。

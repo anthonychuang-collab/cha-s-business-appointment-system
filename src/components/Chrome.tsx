@@ -5,7 +5,7 @@ import { unreadNotificationCount } from "@/lib/data/repo";
 import { sql } from "@/lib/data/db";
 
 type SalesTab = "home" | "book" | "list";
-type AdminTab = "overview" | "schedule" | "options" | "users" | "notifications";
+type AdminTab = "overview" | "schedule" | "options" | "users" | "notifications" | "audit";
 
 export function SalesHeader({ me, tab }: { me: CurrentUser; tab?: SalesTab }) {
   return (
@@ -35,6 +35,7 @@ export async function AdminHeader({ me, tab }: { me: CurrentUser; tab: AdminTab 
           ["schedule", "醫師班表", "/admin/schedule"],
           ["options", "項目與營業", "/admin/options"],
           ["users", "帳號與權限", "/admin/users"],
+          ["audit", "操作紀錄", "/admin/audit"],
         ] as [AdminTab, string, string][])
       : []),
   ];

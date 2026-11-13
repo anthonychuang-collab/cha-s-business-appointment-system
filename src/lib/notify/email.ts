@@ -86,9 +86,13 @@ const FIELDS: Partial<Record<keyof Appointment, { label: string; show: (v: unkno
  * 把 booking.ts 的 diff（{ 欄位: { from, to } }）轉成信件用的文字。
  * 照護備註一律只寫「已修改」。
  */
+/** 顯示順序固定（資料庫 jsonb 不保留鍵的順序） */
+const FIELD_ORDER: string[] = [...Object.keys(FIELDS).slice(0, Object.keys(FIELDS).indexOf("preferredDoctorNote") + 1), "careNote", ...Object.keys(FIELDS).slice(Object.keys(FIELDS).indexOf("preferredDoctorNote") + 1)];
+const rank = (k: string) => (FIELD_ORDER.indexOf(k) + 1 || FIELD_ORDER.length + 1);
+
 export function describeChanges(diff: Record<string, unknown>, n: Names): ChangeLine[] {
   const out: ChangeLine[] = [];
-  for (const [key, value] of Object.entries(diff)) {
+  for (const [key, value] of Object.entries(diff).sort(([a], [b]) => rank(a) - rank(b))) {
     if (key === "careNote") {
       out.push({ label: "照護備註", from: "", to: "已修改（內容請登入後台查看）" });
       continue;

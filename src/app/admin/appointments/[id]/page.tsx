@@ -5,6 +5,8 @@ import { namesOf, pageRef } from "@/lib/booking";
 import { findAppointment, listAudit } from "@/lib/data/repo";
 import { sql } from "@/lib/data/db";
 import { minutesUntil } from "@/lib/domain/time";
+import { actionLabel, auditLines } from "@/lib/audit-format";
+import { taipeiTime } from "@/lib/notify/email";
 import { CONFLICT_LABEL, displayDate, STATUS_BADGE, STATUS_LABEL } from "@/lib/format";
 import { AdminHeader, Footer } from "@/components/Chrome";
 import { ActionForm } from "@/components/ActionForm";
@@ -20,7 +22,9 @@ export default async function AdminDetail({ params }: PageProps<"/admin/appointm
   const { doctorName, itemName, salespersonName, userName } = namesOf(db);
   const started = minutesUntil(new Date(), a.date, a.start) <= 0;
   const hidden = <><input type="hidden" name="id" value={a.id} /><input type="hidden" name="version" value={a.version} /></>;
-  const history = await listAudit(sql(), "appointment", a.id);
+  // 操作紀錄僅店長可看（規格 6、驗收 19：代理店長不可查看）
+  const isAdmin = me.user.role === "admin";
+  const history = isAdmin ? await listAudit(sql(), "appointment", a.id) : [];
   const opening = db.openings[0];
   const hours = opening ? Array.from({ length: Number(opening.end.slice(0, 2)) - Number(opening.start.slice(0, 2)) }, (_, i) => `${String(Number(opening.start.slice(0, 2)) + i).padStart(2, "0")}:00`) : [];
 
@@ -138,11 +142,19 @@ export default async function AdminDetail({ params }: PageProps<"/admin/appointm
           </div>
           <aside className="summary">
             <h3>操作紀錄</h3>
-            <div className="timeline">
-              {history.map((l) => (
-                <p key={l.id}>{l.action}{l.reason ? `：${l.reason}` : ""}<small>{userName(l.actorUserId)}・{new Date(l.createdAt).toLocaleString("zh-TW", { timeZone: "Asia/Taipei", hour12: false })}</small></p>
-              ))}
-            </div>
+            {isAdmin ? (
+              <div className="timeline">
+                {history.map((l) => (
+                  <p key={l.id}>
+                    {actionLabel(l.entityType, l.action)}{l.reason ? `：${l.reason}` : ""}
+                    {auditLines(l, { itemName, doctorName, salespersonName }).map((t, i) => <small key={i}>{t}</small>)}
+                    <small>{userName(l.actorUserId)}・{taipeiTime(l.createdAt)}</small>
+                  </p>
+                ))}
+              </div>
+            ) : (
+              <p className="muted">操作紀錄僅店長可查看。</p>
+            )}
           </aside>
         </div>
       </main>

@@ -173,7 +173,7 @@ async function createAdmin(argv) {
     // 不記錄密碼或雜湊；actor 為空代表系統初始化
     await tx`
       insert into audit_logs (entity_type, entity_id, actor_user_id, action, changes)
-      values ('account', ${u.id}, null, 'bootstrap-admin', ${tx.json({ loginName, role: "admin" })})`;
+      values ('account', ${u.id}, null, 'bootstrap-admin', ${tx.json({ name: displayName, loginName, role: "admin" })})`;
     return { id: u.id };
   });
   if (created.error) {

@@ -584,3 +584,80 @@ export async function pendingDigestCount(q: Q): Promise<number> {
   const [r] = await q`select count(*)::int as n from notifications where email_mode = 'digest' and digest_id is null`;
   return Number(r.n);
 }
+
+// ---------- 操作紀錄查詢（僅店長；唯讀） ----------
+
+export interface AuditFilter {
+  /** 台北日期 YYYY-MM-DD（含當天） */
+  from?: string;
+  to?: string;
+  entityType?: AuditLog["entityType"];
+  actorUserId?: string;
+  /** "entityType:action" */
+  action?: string;
+  /** 預約編號、客戶姓名、原因或內容的關鍵字 */
+  keyword?: string;
+}
+
+export interface AuditRow extends AuditLog {
+  actorName: string | null;
+  /** 對象的顯示名稱（預約為編號＋客戶＋時段；帳號、醫師、項目為名稱） */
+  targetLabel: string | null;
+}
+
+const likeEscape = (s: string) => s.replace(/[\\%_]/g, (c) => `\\${c}`);
+
+function auditWhere(q: Q, f: AuditFilter) {
+  const conds = [q`true`];
+  if (f.from) conds.push(q`l.created_at >= (${f.from}::date)::timestamp at time zone 'Asia/Taipei'`);
+  if (f.to) conds.push(q`l.created_at < (${f.to}::date + 1)::timestamp at time zone 'Asia/Taipei'`);
+  if (f.entityType) conds.push(q`l.entity_type = ${f.entityType}`);
+  if (f.actorUserId) conds.push(isUuid(f.actorUserId) ? q`l.actor_user_id = ${f.actorUserId}` : q`false`);
+  if (f.action) {
+    const i = f.action.indexOf(":");
+    conds.push(i > 0 ? q`l.entity_type = ${f.action.slice(0, i)} and l.action = ${f.action.slice(i + 1)}` : q`false`);
+  }
+  if (f.keyword) {
+    const k = `%${likeEscape(f.keyword)}%`;
+    conds.push(q`(a.code ilike ${k} or a.customer_name ilike ${k} or l.reason ilike ${k} or l.changes::text ilike ${k} or t.display_name ilike ${k})`);
+  }
+  return conds.reduce((acc, c) => q`${acc} and ${c}`);
+}
+
+const AUDIT_JOINS = (q: Q) => q`
+  from audit_logs l
+  left join user_accounts u on u.id = l.actor_user_id
+  left join appointments a on l.entity_type = 'appointment' and a.id::text = l.entity_id
+  left join user_accounts t on l.entity_type = 'account' and t.id::text = l.entity_id
+  left join doctors d on l.entity_type = 'doctor' and d.id::text = l.entity_id
+  left join appointment_items i on l.entity_type = 'item' and i.id::text = l.entity_id
+  left join salespeople s on l.entity_type = 'salesperson' and s.id::text = l.entity_id`;
+
+export async function searchAudit(q: Q, f: AuditFilter, limit: number, offset: number): Promise<{ rows: AuditRow[]; total: number }> {
+  const where = auditWhere(q, f);
+  const [rows, [{ n }]] = await Promise.all([
+    q`
+      select l.*, u.display_name as actor_name,
+        case l.entity_type
+          when 'appointment' then a.code || '　' || a.customer_name || '　' || to_char(a.appointment_date, 'YYYY-MM-DD') || ' ' || to_char(a.start_time, 'HH24:MI')
+          when 'account' then t.display_name || '（' || t.login_name || '）'
+          when 'doctor' then d.display_name
+          when 'item' then coalesce(i.name, l.changes->>'name')
+          when 'salesperson' then s.display_name
+        end as target_label
+      ${AUDIT_JOINS(q)}
+      where ${where}
+      order by l.created_at desc, l.id desc
+      limit ${limit} offset ${offset}`,
+    q`select count(*)::int as n ${AUDIT_JOINS(q)} where ${where}`,
+  ]);
+  return {
+    total: Number(n),
+    rows: rows.map((r) => ({
+      id: String(r.id), entityType: r.entity_type as AuditLog["entityType"], entityId: String(r.entity_id),
+      actorUserId: r.actor_user_id == null ? "" : String(r.actor_user_id), action: String(r.action),
+      changes: (r.changes as Record<string, unknown>) ?? {}, reason: String(r.reason), createdAt: iso(r.created_at),
+      actorName: (r.actor_name as string | null) ?? null, targetLabel: (r.target_label as string | null) ?? null,
+    })),
+  };
+}
