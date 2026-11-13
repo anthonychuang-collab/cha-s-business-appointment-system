@@ -40,7 +40,7 @@ python3 tests/e2e/booking_flow.py http://localhost:3000 e2e-shots   # Playwright
 - **並行安全**：寫入一律在 `withTx` 交易內，取鎖順序固定：班表鎖（預約寫入共用、班表異動獨占）→ 冪等鍵 → 預約列 `FOR UPDATE` → 時段鎖 `pg_advisory_xact_lock(hashtext(date || start))` → 當日編號鎖。Supabase 連線池為 transaction 模式，只能用交易層級鎖、`prepare: false`。改動並行邏輯時先在 `tests/integration/` 加測試。
 - **資料表變更**：只新增 `supabase/migrations/` 的新檔（檔名時間戳遞增），不要改已套用的舊檔；新資料表要開 RLS 並 revoke anon／authenticated；同時更新 `src/lib/data/schema-version.ts`（有測試檢查）。migration 必須相容於舊版程式（先 migrate 再部署）。
 - **時間一律台北時間**：使用 `src/lib/domain/time.ts`，不可依賴主機時區（Vercel 為 UTC）；伺服器端也不要用 `toLocaleString` 產生要比對或寄出的文字（各主機 ICU 輸出不同，例如空白字元），用 `lib/notify/email.ts` 的 `taipeiTime()`。
-- **操作紀錄**：每個異動都要寫 audit_logs，`changes` 存「看得懂的內容」（名稱、時段等當下文字，或 `{ from, to }`），不存密碼、雜湊、照護備註原文。新增動作時同步在 `src/lib/audit-format.ts` 補中文名稱。只有店長能看（代理店長、業務都不行）。
+- **操作紀錄**：每個異動都要寫 audit_logs，`changes` 存「看得懂的內容」（名稱、時段等當下文字，或 `{ from, to }`），不存密碼、雜湊、照護備註原文。新增動作時同步在 `src/lib/audit-format.ts` 補中文名稱。全院操作紀錄只有店長能看（代理店長、業務都不行）；業務在自己名下預約的詳情頁只看得到該筆的時間軸（動作、誰、何時，不含內容與原因），這是刻意保留的設計（規格 12），不要移除。
 - **通知與寄信**：事件一律在預約交易內呼叫 `notify()` 寫入（含寄信用的 payload），**絕不在交易內寄信**；交易提交後由 `lib/notify/deliver.ts` 寄送。信件內容只在 `lib/notify/email.ts` 產生，照護備註永遠只寫「已修改」。
 - **介面全部繁體中文**；顏色、字體、間距只改 `src/app/globals.css` 的 `:root` 變數。
 - **不可放假資料或示範人名進正式環境**；不可在前端寫固定密碼；不可把姓名、電話、照護備註放進網址或 localStorage。

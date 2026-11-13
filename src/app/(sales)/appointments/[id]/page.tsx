@@ -3,6 +3,8 @@ import { notFound } from "next/navigation";
 import { requireUser } from "@/lib/auth/session";
 import { getOwnAppointment, maxBookableDate, namesOf, pageRef, todayTaipei } from "@/lib/booking";
 import { listAudit } from "@/lib/data/repo";
+import { actionLabel } from "@/lib/audit-format";
+import { taipeiTime } from "@/lib/notify/email";
 import { sql } from "@/lib/data/db";
 import { minutesUntil } from "@/lib/domain/time";
 import { EDIT_LEAD_MIN } from "@/lib/domain/rules";
@@ -32,8 +34,8 @@ export default async function Detail({ params }: PageProps<"/appointments/[id]">
   const items = db.items.filter((i) => i.active || i.id === a.itemId).sort((x, y) => x.sortOrder - y.sortOrder).map((i) => ({ id: i.id, name: i.name }));
   const activeDoctors = new Set(db.doctors.filter((d) => d.active).map((d) => d.id));
   const shiftHints = db.shifts.filter((s) => s.active && activeDoctors.has(s.doctorId)).map((s) => ({ weekday: s.weekday, text: `${db.doctors.find((d) => d.id === s.doctorId)!.displayName} ${s.start}–${s.end}` }));
+  // 只有這筆預約的時間軸（動作、誰、何時），不含修改內容與原因；全院操作紀錄僅店長可看（規格 12）
   const history = (await listAudit(sql(), "appointment", a.id)).slice(0, 8);
-  const ACTION: Record<string, string> = { create: "建立預約", update: "修改預約", cancel: "取消預約", overbook: "店長加開", reassign: "轉換負責業務", "keep-conflict": "店長標記保留", "conflict-recompute": "班表異動重新檢查" };
 
   return (
     <>
@@ -97,7 +99,7 @@ export default async function Detail({ params }: PageProps<"/appointments/[id]">
             <h3>預約動態</h3>
             <div className="timeline">
               {history.map((l) => (
-                <p key={l.id}>{ACTION[l.action] ?? l.action}<small>{userName(l.actorUserId)}・{new Date(l.createdAt).toLocaleString("zh-TW", { timeZone: "Asia/Taipei", hour12: false })}</small></p>
+                <p key={l.id}>{actionLabel(l.entityType, l.action)}<small>{userName(l.actorUserId)}・{taipeiTime(l.createdAt)}</small></p>
               ))}
             </div>
             <p className="muted">修改、改期或取消後，店長會收到通知。</p>
