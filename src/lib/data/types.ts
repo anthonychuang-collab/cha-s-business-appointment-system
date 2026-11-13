@@ -1,4 +1,4 @@
-/** 資料模型（對應規格第 8 節）。換成 Supabase 時，資料表欄位以此為準。 */
+/** 資料模型（對應規格第 8 節與 supabase/migrations）。資料表欄位對應見 src/lib/data/repo.ts。 */
 import type { AppointmentStatus, ConflictStatus } from "@/lib/domain/rules";
 import type { ConflictReason } from "@/lib/domain/conflicts";
 import type { BlockRule, DoctorShift, OpeningRule } from "@/lib/domain/schedule";
@@ -83,6 +83,15 @@ export interface Notification {
   mode: NotifyMode;
   readAt: string | null;
   createdAt: string;
+  /** 事件當下的預約摘要與差異（寄信用，見 lib/notify/email.ts） */
+  payload: Record<string, unknown>;
+  emailSentAt: string | null;
+  emailError: string | null;
+  emailAttempts: number;
+  /** 下一次寄送嘗試時間；null = 不需要再寄 */
+  emailNextAttemptAt: string | null;
+  /** 日報事件已歸入的日報；null = 尚未寄出日報 */
+  digestId: string | null;
 }
 
 export interface AuditLog {
@@ -100,29 +109,4 @@ export interface Settings {
   maxDays: number;
   notifyEmails: string[];
   notifyModes: Record<NotifyEvent, NotifyMode>;
-}
-
-export interface Session {
-  token: string;
-  userId: string;
-  expiresAt: number;
-}
-
-export interface Db {
-  users: UserAccount[];
-  salespeople: Salesperson[];
-  items: Item[];
-  doctors: Doctor[];
-  shifts: DoctorShiftRow[];
-  blocks: BlockRow[];
-  openings: OpeningRow[];
-  appointments: Appointment[];
-  notifications: Notification[];
-  audit: AuditLog[];
-  settings: Settings;
-  sessions: Session[];
-  /** 冪等請求：key → 已建立的預約 id */
-  idempotency: Map<string, string>;
-  loginFailures: Map<string, { count: number; until: number }>;
-  seq: number;
 }

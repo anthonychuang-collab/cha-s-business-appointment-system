@@ -7,7 +7,7 @@ export type FormState = { ok: boolean; message: string } | null;
 
 async function run(id: string, version: number, changes: Parameters<typeof updateSalesAppointment>[4], okMsg: string): Promise<FormState> {
   const me = await requireUser(["sales"]);
-  const r = updateSalesAppointment(me.user, me.salesperson!.id, String(id), Number(version), changes);
+  const r = await updateSalesAppointment(me.user, me.salesperson!.id, String(id), Number(version), changes);
   if (!r.ok) return { ok: false, message: r.message };
   refresh();
   return { ok: true, message: okMsg };

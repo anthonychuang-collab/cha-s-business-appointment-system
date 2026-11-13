@@ -1,5 +1,6 @@
 import { requireUser } from "@/lib/auth/session";
-import { db } from "@/lib/data/store";
+import { pageRef } from "@/lib/booking";
+import { itemsInUse } from "@/lib/admin";
 import { WEEKDAY_LABEL } from "@/lib/format";
 import type { NotifyEvent } from "@/lib/data/types";
 import { AdminHeader, Footer } from "@/components/Chrome";
@@ -16,8 +17,9 @@ const EVENTS: [NotifyEvent, string][] = [
 
 export default async function OptionsPage() {
   const me = await requireUser(["admin"]);
+  const db = await pageRef();
   const items = [...db.items].sort((a, b) => a.sortOrder - b.sortOrder);
-  const used = new Set(db.appointments.map((a) => a.itemId));
+  const used = await itemsInUse();
   const opening = db.openings[0];
   const st = db.settings;
 

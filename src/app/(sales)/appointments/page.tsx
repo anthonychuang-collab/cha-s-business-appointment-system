@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { requireUser } from "@/lib/auth/session";
-import { itemName, listOwnAppointments } from "@/lib/booking";
+import { getNames, listOwnAppointments } from "@/lib/booking";
 import { CONFLICT_LABEL, displayDate, STATUS_BADGE, STATUS_LABEL } from "@/lib/format";
 import { Footer, SalesHeader } from "@/components/Chrome";
 
@@ -10,7 +10,8 @@ export default async function MyAppointments({ searchParams }: PageProps<"/appoi
   const status = String(sp.status ?? "active");
   const onlyConflict = sp.filter === "conflict";
   const me = await requireUser(["sales"]);
-  const all = listOwnAppointments(me.salesperson!.id);
+  const all = await listOwnAppointments(me.salesperson!.id);
+  const { itemName } = await getNames();
   const conflictCount = all.filter((a) => a.status === "active" && a.conflictStatus === "conflict").length;
   const rows = all.filter(
     (a) =>

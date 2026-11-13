@@ -1,16 +1,17 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireUser } from "@/lib/auth/session";
-import { doctorName, getOwnAppointment, itemName } from "@/lib/booking";
+import { getNames, getOwnAppointment } from "@/lib/booking";
 import { displayDate } from "@/lib/format";
 import { Footer, SalesHeader } from "@/components/Chrome";
 
 export default async function Done({ params }: PageProps<"/book/done/[id]">) {
   const { id } = await params;
   const me = await requireUser(["sales"]);
-  const a = getOwnAppointment(me.salesperson!.id, id);
+  const a = await getOwnAppointment(me.salesperson!.id, id);
   // 只有本人建立的預約才看得到成功頁
   if (!a || a.createdBy !== me.user.id) notFound();
+  const { doctorName, itemName } = await getNames();
 
   return (
     <>

@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { requireUser } from "@/lib/auth/session";
-import { db } from "@/lib/data/store";
-import { doctorName, itemName, salespersonName, scheduleData, todayTaipei } from "@/lib/booking";
+import { namesOf, pageRef, scheduleData, todayTaipei } from "@/lib/booking";
+import { listAppointments } from "@/lib/data/repo";
+import { sql } from "@/lib/data/db";
 import { checkHour, openingFor } from "@/lib/domain/schedule";
 import { addDays } from "@/lib/domain/time";
 import { CONFLICT_LABEL, displayDate, STATUS_BADGE, STATUS_LABEL } from "@/lib/format";
@@ -15,9 +16,11 @@ export default async function Overview({ searchParams }: PageProps<"/admin">) {
   const fDoctor = String(sp.doctor ?? "");
   const fStatus = String(sp.status ?? "");
 
-  const schedule = scheduleData();
+  const db = await pageRef();
+  const { doctorName, itemName, salespersonName } = namesOf(db);
+  const schedule = scheduleData(db);
   const opening = openingFor(schedule, date);
-  const dayAll = db.appointments.filter((a) => a.date === date);
+  const dayAll = await listAppointments(sql(), { date });
   const day = dayAll.filter(
     (a) =>
       (!fSales || a.salespersonId === fSales) &&
@@ -26,7 +29,7 @@ export default async function Overview({ searchParams }: PageProps<"/admin">) {
   );
   const hours = opening ? Array.from({ length: (Number(opening.end.slice(0, 2)) - Number(opening.start.slice(0, 2))) }, (_, i) => Number(opening.start.slice(0, 2)) + i) : [];
   const today = todayTaipei();
-  const conflicts = db.appointments.filter((a) => a.status === "active" && a.conflictStatus === "conflict" && a.date >= today).sort((a, b) => (a.date + a.start).localeCompare(b.date + b.start));
+  const conflicts = await listAppointments(sql(), { status: "active", conflictStatus: "conflict", dateFrom: today });
   const active = dayAll.filter((a) => a.status !== "cancelled");
   const qs = (d: string) => `/admin?date=${d}${fSales ? `&sales=${fSales}` : ""}${fDoctor ? `&doctor=${fDoctor}` : ""}${fStatus ? `&status=${fStatus}` : ""}`;
 

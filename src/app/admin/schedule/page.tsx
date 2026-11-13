@@ -1,6 +1,5 @@
 import { requireUser } from "@/lib/auth/session";
-import { db } from "@/lib/data/store";
-import { todayTaipei } from "@/lib/booking";
+import { pageRef, todayTaipei } from "@/lib/booking";
 import { WEEKDAY_LABEL } from "@/lib/format";
 import { AdminHeader, Footer } from "@/components/Chrome";
 import { ActionForm, PreviewForm } from "@/components/ActionForm";
@@ -19,6 +18,7 @@ function WeekdaySelect({ name = "weekday", value }: { name?: string; value?: num
 export default async function SchedulePage() {
   const me = await requireUser(["admin"]);
   const today = todayTaipei();
+  const db = await pageRef();
   const shifts = [...db.shifts].sort((a, b) => a.weekday - b.weekday || a.start.localeCompare(b.start));
   const blocks = db.blocks.filter((b) => b.active && (b.specificDate === null || b.specificDate >= today));
 
