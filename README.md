@@ -11,8 +11,8 @@ Next.js 16（App Router）＋ TypeScript。
 npm install
 cp .env.example .env.local   # 填 DATABASE_URL（本機開發用 localhost 的資料庫）
 npm run dev                  # http://localhost:3000；本機資料庫會自動 migrate 並建立測試帳號
-npm test                     # 141 個規則與信件內容單元測試（有設 TEST_DATABASE_URL 時另跑 30 個資料庫整合測試）
-npm run test:db              # 讀 .env.local 的 TEST_DATABASE_URL，跑全部 171 個測試
+npm test                     # 143 個規則與信件內容單元測試（有設 TEST_DATABASE_URL 時另跑 39 個資料庫整合測試）
+npm run test:db              # 讀 .env.local 的 TEST_DATABASE_URL，跑全部 182 個測試
 npm run typecheck
 npm run build
 ```
@@ -63,7 +63,8 @@ src/lib/data/       資料型別、PostgreSQL 連線（db.ts）、SQL 存取層�
 supabase/migrations 資料表與初始設定（RLS 全開、不給任何 policy，Supabase 公開 API 讀寫不到）
 scripts/db.mjs      migrate / seed-dev / reset / create-admin
 src/lib/notify/     Email 通知：內容（email.ts，純函式）、寄送與重試（deliver.ts）、Resend／開發用寄信（transport.ts）
-tests/integration/  資料庫整合測試：同時段鎖位、冪等、版本衝突、預約編號、班表重算、登入鎖定、第一位店長初始化、即時信寄送與重試
+src/app/api/cron/   每日排程端點（日報＋補寄），受 CRON_SECRET 保護
+tests/integration/  資料庫整合測試：同時段鎖位、冪等、版本衝突、預約編號、班表重算、登入鎖定、第一位店長初始化、即時信寄送與重試、每日日報
 src/app/            頁面與 Server Actions（每個 action 都在伺服器端重新檢查角色）
 tests/e2e/          Playwright 完整操作測試（python3 tests/e2e/booking_flow.py http://localhost:3000 輸出資料夾）
 ```
@@ -124,15 +125,27 @@ tests/e2e/          Playwright 完整操作測試（python3 tests/e2e/booking_fl
 - 內容：事件、操作者、預約摘要、修改前後、後台連結；照護備註只寫「已修改」；不含密碼或憑證（`src/lib/notify/email.ts`，有單元測試）。
 - 開發環境沒有設定 Resend 時只在終端機印出主旨與收件人。
 
+### 每日 21:00 日報
+
+- `vercel.json` 設定 Vercel Cron 每天 UTC 13:00（台北 21:00）呼叫 `/api/cron/daily`。Hobby 方案的排程可能在該小時內任一時間觸發（21:00–21:59）。
+- 需設定環境變數 `CRON_SECRET`（Vercel 會自動帶 `Authorization: Bearer <CRON_SECRET>`）；未設定時端點回 503，金鑰不符回 401。
+- 每次執行：建立當天日報（彙整所有尚未寄過的「日報」事件，沒有事件不寄）→ 寄出 → 順便補寄到期的即時信與日報重試。
+- 台北時間未到 21:00 不建立日報；同一天重複觸發只會有一封（`email_digests.digest_date` 唯一＋鎖）。
+- 日報的寄送狀態、失敗原因與「重新寄送」在後台「通知」頁下方。
+- 手動觸發（例如補寄）：
+
+  ```bash
+  curl -H "Authorization: Bearer $CRON_SECRET" https://預約系統網址/api/cron/daily
+  ```
+
 ## 尚未完成
 
-- 每日 21:00 日報排程（「日報」事件目前只出現在後台通知清單）。
 - 操作紀錄的獨立查詢頁（目前只在預約詳情顯示該筆的紀錄）。
 - 正式環境的備份與還原。
 
 ## 已驗證
 
-- `npm test`：141 個規則與信件內容測試全部通過；接上測試資料庫時 30 個整合測試也全部通過（共 171）。
+- `npm test`：143 個規則與信件內容測試全部通過；接上測試資料庫時 39 個整合測試也全部通過（共 182）。
 - `tests/e2e/booking_flow.py`：接 PostgreSQL 後以桌面 1280px 與手機 390px 實際操作，20 項檢查全部通過，包括：
   - 錯誤帳密的提示，業務直接輸入 `/admin` 會被導回首頁。
   - 欄位錯誤顯示，上一步返回時資料保留。

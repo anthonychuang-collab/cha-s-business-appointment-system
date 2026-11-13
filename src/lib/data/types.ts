@@ -90,6 +90,8 @@ export interface Notification {
   emailAttempts: number;
   /** 下一次寄送嘗試時間；null = 不需要再寄 */
   emailNextAttemptAt: string | null;
+  /** 日報事件已歸入的日報；null = 尚未寄出日報 */
+  digestId: string | null;
 }
 
 export interface AuditLog {

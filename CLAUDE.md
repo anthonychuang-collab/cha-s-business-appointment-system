@@ -5,7 +5,7 @@
 ## 這是什麼
 
 診所內部預約系統：業務用個人帳號替客戶預約、管理自己名下的預約；店長在後台管理全院預約、班表、設定與帳號。
-目前狀態：**前後台頁面與所有預約規則已完成並通過測試；資料已存 PostgreSQL（Supabase），並有並行整合測試。正式環境用 `npm run db:create-admin` 建立第一位店長；即時信以 Resend 寄送並自動重試。尚未做每日日報。**
+目前狀態：**前後台頁面與所有預約規則已完成並通過測試；資料已存 PostgreSQL（Supabase），並有並行整合測試。正式環境用 `npm run db:create-admin` 建立第一位店長；即時信以 Resend 寄送並自動重試；每日 21:00 日報由 Vercel Cron 觸發。**
 
 ## 必讀文件（依序）
 
@@ -20,8 +20,8 @@
 npm install
 cp .env.example .env.local   # 填 DATABASE_URL、TEST_DATABASE_URL（本機 PostgreSQL）
 npm run dev        # 開發伺服器；本機資料庫會自動 migrate 並建立 dev-admin / dev-sales-a / dev-sales-b / dev-deputy
-npm test           # 141 個規則與信件內容單元測試（設了 TEST_DATABASE_URL 時另跑資料庫整合測試）
-npm run test:db    # 讀 .env.local，跑全部 171 個（含並行整合測試；會清空 TEST_DATABASE_URL）
+npm test           # 143 個規則與信件內容單元測試（設了 TEST_DATABASE_URL 時另跑資料庫整合測試）
+npm run test:db    # 讀 .env.local，跑全部 182 個（含並行整合測試；會清空 TEST_DATABASE_URL）
 npm run typecheck
 npm run build
 npm run db:reset   # 清空本機資料庫並重建（e2e 前先跑）
@@ -55,7 +55,7 @@ python3 tests/e2e/booking_flow.py http://localhost:3000 e2e-shots   # Playwright
 1. ~~**接 Supabase**~~（2026-11-13 完成）：migration、`repo.ts` 存取層、session／冪等／登入失敗存資料庫、並行整合測試。順帶修正登入失敗計數永遠歸 1、永不鎖定的錯誤。
 2. ~~**正式環境初始化**~~（2026-11-13 完成）：`npm run db:create-admin`，密碼只能在提示時輸入（終端機不回顯），已有店長即拒絕，同時執行也只建立一位，寫入操作紀錄。
 3. ~~**Email 通知**~~（2026-11-13 完成）：outbox＋`after()` 寄送、退避重試、設定錯誤停止並可手動重寄、`SKIP LOCKED`＋Resend 冪等鍵防重複。日報要用的 `notifications.payload`（預約摘要與差異）已一併寫入。
-4. **每日 21:00 日報**：Vercel Cron 呼叫受 `CRON_SECRET` 保護的 Route Handler，彙整 `mode = digest` 的通知；同一個排程也呼叫 `deliverPendingEmails()` 補寄到期的即時信重試。
+4. ~~**每日 21:00 日報**~~（2026-11-13 完成）：`vercel.json` 排程 → `/api/cron/daily`（`CRON_SECRET`）→ `runDailyDigest()` 建立當天日報（未到 21:00 不建、沒事件不寄、一天一封）＋ `deliverAll()` 補寄重試。
 5. **操作紀錄查詢頁**（僅店長）。
 6. **部署**到 Vercel，撰寫備份／還原說明。
 

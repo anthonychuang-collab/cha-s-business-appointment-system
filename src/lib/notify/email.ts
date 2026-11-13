@@ -182,3 +182,58 @@ export function buildInstantEmail(i: InstantEmailInput): EmailContent {
 
   return { subject, text: text.join("\n"), html };
 }
+
+// ---------- 每日日報 ----------
+
+export interface DigestItem {
+  event: NotifyEvent;
+  summary: string;
+  actorName: string;
+  createdAt: string;
+  appointmentId: string | null;
+  payload: NotificationPayload;
+}
+
+/** 一封日報彙整多筆事件（依發生時間排序）；內容規則與即時信相同 */
+export function buildDigestEmail(i: { date: string; items: DigestItem[]; baseUrl?: string }): EmailContent {
+  const items = [...i.items].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  const base = i.baseUrl?.replace(/\/+$/, "");
+  const link = (it: DigestItem) => (base && it.appointmentId ? `${base}/admin/appointments/${it.appointmentId}` : null);
+  const subject = `[PURE IN 預約] 每日日報｜${i.date}（${items.length} 件）`;
+  const changeText = (c: ChangeLine) => (c.from ? `${c.label}：${c.from} → ${c.to}` : `${c.label}：${c.to}`);
+
+  const text: string[] = [`${i.date} 日報，共 ${items.length} 件（自上一封日報之後）。`, ""];
+  items.forEach((it, n) => {
+    text.push(`${n + 1}. ${taipeiTime(it.createdAt)}　${EVENT_LABEL[it.event]}　操作者：${it.actorName}`, `   ${it.summary}`);
+    const a = it.payload.appointment;
+    if (a) text.push(`   ${a.code}　${a.date} ${a.start}–${a.end}　${a.itemName}・${a.partySize} 人　負責業務 ${a.salespersonName}`);
+    for (const c of it.payload.changes ?? []) text.push(`   - ${changeText(c)}`);
+    const l = link(it);
+    if (l) text.push(`   ${l}`);
+    text.push("");
+  });
+  text.push("此信由 PURE IN 內部預約系統自動寄出；照護備註等詳細內容請登入後台查看。");
+
+  const html = [
+    `<div style="font-family:-apple-system,'PingFang TC','Noto Sans TC','Microsoft JhengHei',sans-serif;color:#2b241e;font-size:14px;line-height:1.6;max-width:640px">`,
+    `<h2 style="font-size:18px;margin:0 0 4px">每日日報｜${esc(i.date)}</h2>`,
+    `<p style="margin:0 0 16px;color:#6b5e52">共 ${items.length} 件（自上一封日報之後）</p>`,
+    ...items.map((it) => {
+      const a = it.payload.appointment;
+      const l = link(it);
+      return [
+        `<div style="border-top:1px solid #e6ddd3;padding:12px 0">`,
+        `<div style="color:#6b5e52;font-size:13px">${esc(taipeiTime(it.createdAt))}　${esc(EVENT_LABEL[it.event])}　操作者：${esc(it.actorName)}</div>`,
+        `<div>${esc(it.summary)}</div>`,
+        a ? `<div style="color:#6b5e52;font-size:13px">${esc(`${a.code}　${a.date} ${a.start}–${a.end}　${a.itemName}・${a.partySize} 人　負責業務 ${a.salespersonName}`)}</div>` : "",
+        (it.payload.changes ?? []).length ? `<ul style="margin:6px 0 0;padding-left:18px">${(it.payload.changes ?? []).map((c) => `<li>${esc(changeText(c))}</li>`).join("")}</ul>` : "",
+        l ? `<div style="margin-top:4px"><a href="${esc(l)}" style="color:#8a5a3b">查看 ↗</a></div>` : "",
+        `</div>`,
+      ].join("");
+    }),
+    `<p style="color:#8c8177;font-size:12px;margin-top:20px">此信由 PURE IN 內部預約系統自動寄出；照護備註等詳細內容請登入後台查看。</p>`,
+    `</div>`,
+  ].join("");
+
+  return { subject, text: text.join("\n"), html };
+}

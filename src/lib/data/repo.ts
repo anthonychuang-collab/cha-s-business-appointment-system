@@ -254,6 +254,7 @@ const mapNotification = (r: Row): Notification => ({
   readAt: isoOrNull(r.read_at), createdAt: iso(r.created_at), payload: (r.payload as Record<string, unknown>) ?? {},
   emailSentAt: isoOrNull(r.email_sent_at), emailError: (r.email_error as string | null) ?? null,
   emailAttempts: Number(r.email_attempts ?? 0), emailNextAttemptAt: isoOrNull(r.email_next_attempt_at),
+  digestId: r.digest_id == null ? null : String(r.digest_id),
 });
 
 export async function listNotifications(q: Q, limit: number): Promise<Notification[]> {
@@ -495,4 +496,91 @@ export async function recordLoginFailure(q: Q, key: string, max: number, lockMin
 
 export async function clearLoginFailure(q: Q, key: string): Promise<void> {
   await q`delete from login_failures where login_key = ${key}`;
+}
+
+// ---------- 每日日報 ----------
+
+export interface Digest {
+  id: string;
+  date: string;
+  eventCount: number;
+  createdAt: string;
+  emailSentAt: string | null;
+  emailError: string | null;
+  emailAttempts: number;
+  emailNextAttemptAt: string | null;
+}
+
+const mapDigest = (r: Row): Digest => ({
+  id: String(r.id), date: String(r.digest_date), eventCount: Number(r.event_count), createdAt: iso(r.created_at),
+  emailSentAt: isoOrNull(r.email_sent_at), emailError: (r.email_error as string | null) ?? null,
+  emailAttempts: Number(r.email_attempts), emailNextAttemptAt: isoOrNull(r.email_next_attempt_at),
+});
+
+/**
+ * 建立某日的日報：把所有尚未進過日報的「日報」事件歸入這一封，並排入寄送。
+ * 同一天重複呼叫（排程重送）回傳既有的那封；沒有事件回傳 null，不建立。
+ */
+export async function createDigest(tx: Q, date: string): Promise<{ digest: Digest; created: boolean } | null> {
+  await lockKey(tx, `digest:${date}`);
+  const [existing] = await tx`select * from email_digests where digest_date = ${date}`;
+  if (existing) return { digest: mapDigest(existing), created: false };
+  const pending = await tx`
+    select id from notifications where email_mode = 'digest' and digest_id is null
+    order by created_at for update`; // 等待而非略過：被其他交易暫時鎖住的事件也要進這封
+  if (pending.length === 0) return null;
+  const [d] = await tx`
+    insert into email_digests (digest_date, event_count, email_next_attempt_at)
+    values (${date}, ${pending.length}, now()) returning *`;
+  await tx`update notifications set digest_id = ${d.id} where id = any(${pending.map((r) => String(r.id))}::uuid[])`;
+  return { digest: mapDigest(d), created: true };
+}
+
+/** 與 claimDueEmails 相同的租約＋退避 */
+export async function claimDueDigests(q: Q, limit: number): Promise<Digest[]> {
+  const rows = await q`
+    with due as (
+      select id from email_digests
+      where email_sent_at is null and email_next_attempt_at <= now()
+      order by email_next_attempt_at limit ${limit}
+      for update skip locked
+    )
+    update email_digests d set
+      email_attempts = d.email_attempts + 1,
+      email_next_attempt_at = now() + make_interval(mins => (${EMAIL_BACKOFF_MIN}::int[])[least(d.email_attempts + 1, ${EMAIL_BACKOFF_MIN.length})])
+    from due where d.id = due.id
+    returning d.*`;
+  return rows.map(mapDigest);
+}
+
+export async function digestNotifications(q: Q, digestId: string): Promise<Notification[]> {
+  const rows = await q`select * from notifications where digest_id = ${digestId} order by created_at`;
+  return rows.map(mapNotification);
+}
+
+export async function markDigestSent(q: Q, id: string, messageId: string): Promise<void> {
+  await q`update email_digests set email_sent_at = now(), email_next_attempt_at = null, email_error = null, email_message_id = ${messageId} where id = ${id}`;
+}
+
+export async function markDigestFailed(q: Q, id: string, error: string, stop: boolean): Promise<void> {
+  if (stop) await q`update email_digests set email_error = ${error}, email_next_attempt_at = null where id = ${id}`;
+  else await q`update email_digests set email_error = ${error} where id = ${id}`;
+}
+
+export async function requeueDigest(q: Q, id: string): Promise<boolean> {
+  if (!isUuid(id)) return false;
+  const rows = await q`
+    update email_digests set email_next_attempt_at = now(), email_attempts = 0
+    where id = ${id} and email_sent_at is null returning id`;
+  return rows.length === 1;
+}
+
+export async function listDigests(q: Q, limit: number): Promise<Digest[]> {
+  const rows = await q`select * from email_digests order by digest_date desc limit ${limit}`;
+  return rows.map(mapDigest);
+}
+
+export async function pendingDigestCount(q: Q): Promise<number> {
+  const [r] = await q`select count(*)::int as n from notifications where email_mode = 'digest' and digest_id is null`;
+  return Number(r.n);
 }

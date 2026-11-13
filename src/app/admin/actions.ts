@@ -72,6 +72,12 @@ export async function markAllRead() {
   refresh();
 }
 
+export async function resendDigestAction(_p: ActionState, f: FormData): Promise<ActionState> {
+  await managers();
+  const ok = await admin.resendDigestEmail(s(f, "id"));
+  return done(ok, ok ? "已重新排入寄送。" : "此日報已寄出。");
+}
+
 /** 寄送失敗的即時信重新排入寄送（例如補上收件地址、修好寄件網域後） */
 export async function resendEmailAction(_p: ActionState, f: FormData): Promise<ActionState> {
   await managers();

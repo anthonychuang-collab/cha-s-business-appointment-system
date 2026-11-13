@@ -270,6 +270,15 @@ export function transferFutureAppointments(actor: UserAccount, fromSalespersonId
 export const listNotifications = (limit = 200) => repo.listNotifications(sql(), limit);
 export const markAllNotificationsRead = () => repo.markAllNotificationsRead(sql());
 
+export const listDigests = (limit = 14) => repo.listDigests(sql(), limit);
+
+/** 日報重新排入寄送 */
+export async function resendDigestEmail(id: string): Promise<boolean> {
+  const ok = await repo.requeueDigest(sql(), id);
+  if (ok) scheduleEmailDelivery();
+  return ok;
+}
+
 /** 重新排入寄送，並在回應送出後立即嘗試 */
 export async function resendNotificationEmail(id: string): Promise<boolean> {
   const ok = await repo.requeueEmail(sql(), id);
