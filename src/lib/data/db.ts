@@ -15,6 +15,10 @@ export type Q = postgres.Sql | postgres.TransactionSql;
 function connect(): Sql {
   const url = process.env.DATABASE_URL;
   if (!url) throw new Error("缺少 DATABASE_URL：請設定 Supabase 連線字串（本機開發見 README）。");
+  // 格式錯誤時不可把原字串放進錯誤訊息：它含有資料庫密碼，會被寫進 Vercel 等平台的紀錄
+  if (!isValidDatabaseUrl(url)) {
+    throw new Error("DATABASE_URL 格式不正確：需要 postgresql:// 開頭的一整行連線字串（為保護密碼，這裡不顯示內容）。");
+  }
   return postgres(url, {
     // 連到 Supabase 一律加密（連線字串忘了加 ?sslmode=require 也一樣）
     ...(isSupabase(url) && !/[?&]sslmode=/.test(url) ? { ssl: "require" as const } : {}),
@@ -26,6 +30,15 @@ function connect(): Sql {
       date: { to: 1082, from: [1082], serialize: (x: string) => x, parse: (x: string) => x },
     },
   });
+}
+
+function isValidDatabaseUrl(url: string): boolean {
+  try {
+    const u = new URL(url);
+    return (u.protocol === "postgres:" || u.protocol === "postgresql:") && Boolean(u.hostname);
+  } catch {
+    return false;
+  }
 }
 
 function isSupabase(url: string): boolean {
