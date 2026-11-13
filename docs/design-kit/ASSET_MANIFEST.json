@@ -1,0 +1,14 @@
+[
+  {
+    "file": "clinic.png",
+    "bytes": 567079,
+    "sha256": "d857029936d513a3906af452b322b350553bfe2481647a4acc8f1e930caaa994",
+    "source": "https://www.purein.com.tw/_Image/DefaultVisitor/PureInSpace1.png"
+  },
+  {
+    "file": "logo.svg",
+    "bytes": 4815,
+    "sha256": "55d4baa9a885833dbb4fe53b4e55c41e2b484900153484478eb6d13f683dd38d",
+    "source": "https://www.purein.com.tw/_Image/LogoBrown.svg"
+  }
+]
