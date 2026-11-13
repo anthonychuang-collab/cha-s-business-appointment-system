@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { logoutAction } from "@/app/login/actions";
 import type { CurrentUser } from "@/lib/auth/session";
-import { db } from "@/lib/data/store";
+import { unreadNotificationCount } from "@/lib/data/repo";
+import { sql } from "@/lib/data/db";
 
 type SalesTab = "home" | "book" | "list";
 type AdminTab = "overview" | "schedule" | "options" | "users" | "notifications";
@@ -24,9 +25,9 @@ export function SalesHeader({ me, tab }: { me: CurrentUser; tab?: SalesTab }) {
   );
 }
 
-export function AdminHeader({ me, tab }: { me: CurrentUser; tab: AdminTab }) {
+export async function AdminHeader({ me, tab }: { me: CurrentUser; tab: AdminTab }) {
   const isAdmin = me.user.role === "admin";
-  const unread = db.notifications.filter((n) => !n.readAt).length;
+  const unread = await unreadNotificationCount(sql());
   const tabs: [AdminTab, string, string][] = [
     ["overview", "預約總覽", "/admin"],
     ...(isAdmin
@@ -66,7 +67,7 @@ export function Footer() {
   return (
     <footer className="foot">
       <span>PURE IN · 以從容，開始每一次服務。</span>
-      <span>{process.env.NODE_ENV !== "production" ? "開發環境 · 資料存於記憶體，重新啟動即清空" : "樸原健康診所 內部預約系統"}</span>
+      <span>{process.env.NODE_ENV !== "production" ? "開發環境 · 測試帳號僅供開發使用" : "樸原健康診所 內部預約系統"}</span>
     </footer>
   );
 }

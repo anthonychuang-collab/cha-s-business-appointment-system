@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { requireUser } from "@/lib/auth/session";
-import { db } from "@/lib/data/store";
+import { listNotifications } from "@/lib/admin";
 import { AdminHeader, Footer } from "@/components/Chrome";
 import { markAllRead } from "../actions";
 
@@ -9,7 +9,7 @@ const MODE = { instant: "即時信", digest: "日報", none: "不寄信" } as co
 
 export default async function NotificationsPage() {
   const me = await requireUser(["admin", "deputy"]);
-  const list = db.notifications.slice(0, 200);
+  const list = await listNotifications(200);
   return (
     <>
       <AdminHeader me={me} tab="notifications" />

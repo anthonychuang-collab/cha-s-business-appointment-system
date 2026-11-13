@@ -1,15 +1,14 @@
 import Link from "next/link";
 import { requireUser } from "@/lib/auth/session";
-import { listOwnAppointments } from "@/lib/booking";
-import { db } from "@/lib/data/store";
+import { listOwnAppointments, pageRef } from "@/lib/booking";
 import { WEEKDAY_LABEL } from "@/lib/format";
 import { Footer, SalesHeader } from "@/components/Chrome";
 
 export default async function Home() {
   const me = await requireUser(["sales"]);
-  const mine = listOwnAppointments(me.salesperson!.id).filter((a) => a.status === "active");
+  const mine = (await listOwnAppointments(me.salesperson!.id)).filter((a) => a.status === "active");
   const conflicts = mine.filter((a) => a.conflictStatus === "conflict").length;
-  const opening = db.openings[0];
+  const opening = (await pageRef()).openings[0];
   const days = opening ? `${WEEKDAY_LABEL[opening.weekdays[0]]}至${WEEKDAY_LABEL[opening.weekdays.at(-1)!]}` : "";
 
   return (

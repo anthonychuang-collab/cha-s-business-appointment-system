@@ -1,4 +1,4 @@
-/** 資料模型（對應規格第 8 節）。換成 Supabase 時，資料表欄位以此為準。 */
+/** 資料模型（對應規格第 8 節與 supabase/migrations）。資料表欄位對應見 src/lib/data/repo.ts。 */
 import type { AppointmentStatus, ConflictStatus } from "@/lib/domain/rules";
 import type { ConflictReason } from "@/lib/domain/conflicts";
 import type { BlockRule, DoctorShift, OpeningRule } from "@/lib/domain/schedule";
@@ -100,29 +100,4 @@ export interface Settings {
   maxDays: number;
   notifyEmails: string[];
   notifyModes: Record<NotifyEvent, NotifyMode>;
-}
-
-export interface Session {
-  token: string;
-  userId: string;
-  expiresAt: number;
-}
-
-export interface Db {
-  users: UserAccount[];
-  salespeople: Salesperson[];
-  items: Item[];
-  doctors: Doctor[];
-  shifts: DoctorShiftRow[];
-  blocks: BlockRow[];
-  openings: OpeningRow[];
-  appointments: Appointment[];
-  notifications: Notification[];
-  audit: AuditLog[];
-  settings: Settings;
-  sessions: Session[];
-  /** 冪等請求：key → 已建立的預約 id */
-  idempotency: Map<string, string>;
-  loginFailures: Map<string, { count: number; until: number }>;
-  seq: number;
 }

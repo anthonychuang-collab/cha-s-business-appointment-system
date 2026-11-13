@@ -1,8 +1,9 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireUser } from "@/lib/auth/session";
-import { db } from "@/lib/data/store";
-import { doctorName, itemName, salespersonName, userName } from "@/lib/booking";
+import { namesOf, pageRef } from "@/lib/booking";
+import { findAppointment, listAudit } from "@/lib/data/repo";
+import { sql } from "@/lib/data/db";
 import { minutesUntil } from "@/lib/domain/time";
 import { CONFLICT_LABEL, displayDate, STATUS_BADGE, STATUS_LABEL } from "@/lib/format";
 import { AdminHeader, Footer } from "@/components/Chrome";
@@ -13,11 +14,13 @@ import { ManagerReschedule } from "./ManagerReschedule";
 export default async function AdminDetail({ params }: PageProps<"/admin/appointments/[id]">) {
   const { id } = await params;
   const me = await requireUser(["admin", "deputy"]);
-  const a = db.appointments.find((x) => x.id === id);
+  const a = await findAppointment(sql(), id);
   if (!a) notFound();
+  const db = await pageRef();
+  const { doctorName, itemName, salespersonName, userName } = namesOf(db);
   const started = minutesUntil(new Date(), a.date, a.start) <= 0;
   const hidden = <><input type="hidden" name="id" value={a.id} /><input type="hidden" name="version" value={a.version} /></>;
-  const history = db.audit.filter((l) => l.entityType === "appointment" && l.entityId === a.id);
+  const history = await listAudit(sql(), "appointment", a.id);
   const opening = db.openings[0];
   const hours = opening ? Array.from({ length: Number(opening.end.slice(0, 2)) - Number(opening.start.slice(0, 2)) }, (_, i) => `${String(Number(opening.start.slice(0, 2)) + i).padStart(2, "0")}:00`) : [];
 

@@ -1,8 +1,9 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireUser } from "@/lib/auth/session";
-import { db } from "@/lib/data/store";
-import { doctorName, getOwnAppointment, itemName, maxBookableDate, todayTaipei, userName } from "@/lib/booking";
+import { getOwnAppointment, maxBookableDate, namesOf, pageRef, todayTaipei } from "@/lib/booking";
+import { listAudit } from "@/lib/data/repo";
+import { sql } from "@/lib/data/db";
 import { minutesUntil } from "@/lib/domain/time";
 import { EDIT_LEAD_MIN } from "@/lib/domain/rules";
 import { CONFLICT_LABEL, displayDate, STATUS_BADGE, STATUS_LABEL } from "@/lib/format";
@@ -12,8 +13,11 @@ import { BasicsForm, CancelForm, RescheduleForm, ServiceForm } from "./EditForms
 export default async function Detail({ params }: PageProps<"/appointments/[id]">) {
   const { id } = await params;
   const me = await requireUser(["sales"]);
-  const a = getOwnAppointment(me.salesperson!.id, id);
+  const a = await getOwnAppointment(me.salesperson!.id, id);
   if (!a) notFound(); // 不是自己的也回 404，不透露是否存在
+  const db = await pageRef();
+  const { doctorName, itemName, userName } = namesOf(db);
+  const maxDate = await maxBookableDate();
 
   // 介面上的可操作狀態（伺服器送出時仍會用 domain 規則重新檢查）
   const left = minutesUntil(new Date(), a.date, a.start);
@@ -28,7 +32,7 @@ export default async function Detail({ params }: PageProps<"/appointments/[id]">
   const items = db.items.filter((i) => i.active || i.id === a.itemId).sort((x, y) => x.sortOrder - y.sortOrder).map((i) => ({ id: i.id, name: i.name }));
   const activeDoctors = new Set(db.doctors.filter((d) => d.active).map((d) => d.id));
   const shiftHints = db.shifts.filter((s) => s.active && activeDoctors.has(s.doctorId)).map((s) => ({ weekday: s.weekday, text: `${db.doctors.find((d) => d.id === s.doctorId)!.displayName} ${s.start}–${s.end}` }));
-  const history = db.audit.filter((l) => l.entityType === "appointment" && l.entityId === a.id).slice(0, 8);
+  const history = (await listAudit(sql(), "appointment", a.id)).slice(0, 8);
   const ACTION: Record<string, string> = { create: "建立預約", update: "修改預約", cancel: "取消預約", overbook: "店長加開", reassign: "轉換負責業務", "keep-conflict": "店長標記保留", "conflict-recompute": "班表異動重新檢查" };
 
   return (
@@ -82,7 +86,7 @@ export default async function Detail({ params }: PageProps<"/appointments/[id]">
                 {canTime && (
                   <details className="editbox" open={inConflict}>
                     <summary>改期</summary>
-                    <div><RescheduleForm id={a.id} version={a.version} requiresDoctor={a.requiresDoctor} today={todayTaipei()} maxDate={maxBookableDate()} shiftHints={shiftHints} overbooked={a.isOverbooked} /></div>
+                    <div><RescheduleForm id={a.id} version={a.version} requiresDoctor={a.requiresDoctor} today={todayTaipei()} maxDate={maxDate} shiftHints={shiftHints} overbooked={a.isOverbooked} /></div>
                   </details>
                 )}
                 {canTime && <div style={{ marginTop: 24 }}><CancelForm id={a.id} version={a.version} label={`${a.date} ${a.start} ${a.customerName}`} /></div>}

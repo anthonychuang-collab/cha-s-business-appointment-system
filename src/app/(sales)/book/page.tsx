@@ -1,12 +1,12 @@
 import { requireUser } from "@/lib/auth/session";
-import { db } from "@/lib/data/store";
-import { maxBookableDate, todayTaipei } from "@/lib/booking";
+import { maxBookableDate, pageRef, todayTaipei } from "@/lib/booking";
 import { WEEKDAY_LABEL } from "@/lib/format";
 import { Footer, SalesHeader } from "@/components/Chrome";
 import { BookingWizard } from "./BookingWizard";
 
 export default async function BookPage() {
   const me = await requireUser(["sales"]);
+  const db = await pageRef();
   const items = db.items.filter((i) => i.active).sort((a, b) => a.sortOrder - b.sortOrder).map((i) => ({ id: i.id, name: i.name }));
   const activeDoctors = new Set(db.doctors.filter((d) => d.active).map((d) => d.id));
   const shiftHints = db.shifts
@@ -22,7 +22,7 @@ export default async function BookPage() {
           salespersonName={me.salesperson!.displayName}
           items={items}
           today={todayTaipei()}
-          maxDate={maxBookableDate()}
+          maxDate={await maxBookableDate()}
           shiftHints={shiftHints}
           weeklyDoctors={weekly}
         />

@@ -3,14 +3,20 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "predev": "node --env-file-if-exists=.env.local scripts/db.mjs dev-setup",
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "test:db": "node --env-file-if-exists=.env.local node_modules/vitest/vitest.mjs run",
+    "typecheck": "tsc --noEmit",
+    "db:migrate": "node --env-file-if-exists=.env.local scripts/db.mjs migrate",
+    "db:seed-dev": "node --env-file-if-exists=.env.local scripts/db.mjs seed-dev",
+    "db:reset": "node --env-file-if-exists=.env.local scripts/db.mjs reset"
   },
   "dependencies": {
     "next": "16.4.6",
+    "postgres": "^3.4.9",
     "react": "19.3.0",
     "react-dom": "19.3.0",
     "server-only": "^0.0.1"

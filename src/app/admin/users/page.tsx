@@ -1,6 +1,6 @@
 import { requireUser } from "@/lib/auth/session";
-import { db } from "@/lib/data/store";
-import { todayTaipei } from "@/lib/booking";
+import { pageRef } from "@/lib/booking";
+import { futureCountBySalesperson } from "@/lib/admin";
 import { AdminHeader, Footer } from "@/components/Chrome";
 import { ActionForm } from "@/components/ActionForm";
 import { createAccountAction, resetPasswordAction, toggleAccountAction, transferAction } from "../actions";
@@ -9,7 +9,8 @@ const ROLE = { admin: "店長", deputy: "代理店長", sales: "業務" } as con
 
 export default async function UsersPage() {
   const me = await requireUser(["admin"]);
-  const today = todayTaipei();
+  const db = await pageRef();
+  const futureBySp = await futureCountBySalesperson();
   const activeSales = db.salespeople.filter((s) => s.active);
 
   return (
@@ -26,7 +27,7 @@ export default async function UsersPage() {
             <tbody>
               {db.users.map((u) => {
                 const sp = db.salespeople.find((s) => s.userAccountId === u.id);
-                const future = sp ? db.appointments.filter((a) => a.salespersonId === sp.id && a.status === "active" && a.date >= today).length : 0;
+                const future = sp ? futureBySp.get(sp.id) ?? 0 : 0;
                 return (
                   <tr key={u.id}>
                     <td>{u.displayName}{u.id === me.user.id && <small>（你）</small>}</td>
