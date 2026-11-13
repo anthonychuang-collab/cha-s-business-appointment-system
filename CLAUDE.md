@@ -5,7 +5,7 @@
 ## 這是什麼
 
 診所內部預約系統：業務用個人帳號替客戶預約、管理自己名下的預約；店長在後台管理全院預約、班表、設定與帳號。
-目前狀態：**前後台頁面與所有預約規則已完成並通過測試；資料已存 PostgreSQL（Supabase），並有並行整合測試。尚未建立正式環境第一位店長、尚未寄信。**
+目前狀態：**前後台頁面與所有預約規則已完成並通過測試；資料已存 PostgreSQL（Supabase），並有並行整合測試。正式環境用 `npm run db:create-admin` 建立第一位店長。尚未寄信。**
 
 ## 必讀文件（依序）
 
@@ -21,10 +21,11 @@ npm install
 cp .env.example .env.local   # 填 DATABASE_URL、TEST_DATABASE_URL（本機 PostgreSQL）
 npm run dev        # 開發伺服器；本機資料庫會自動 migrate 並建立 dev-admin / dev-sales-a / dev-sales-b / dev-deputy
 npm test           # 133 個規則單元測試（設了 TEST_DATABASE_URL 時另跑資料庫整合測試）
-npm run test:db    # 讀 .env.local，跑全部 145 個（含並行整合測試；會清空 TEST_DATABASE_URL）
+npm run test:db    # 讀 .env.local，跑全部 150 個（含並行整合測試；會清空 TEST_DATABASE_URL）
 npm run typecheck
 npm run build
 npm run db:reset   # 清空本機資料庫並重建（e2e 前先跑）
+npm run db:create-admin   # 正式環境建立第一位店長（互動輸入密碼；已有店長即拒絕）
 python3 tests/e2e/booking_flow.py http://localhost:3000 e2e-shots   # Playwright 完整操作測試（需先 db:reset 再啟動 dev）
 ```
 
@@ -51,7 +52,7 @@ python3 tests/e2e/booking_flow.py http://localhost:3000 e2e-shots   # Playwright
 ## 下一步工作（依序）
 
 1. ~~**接 Supabase**~~（2026-11-13 完成）：migration、`repo.ts` 存取層、session／冪等／登入失敗存資料庫、並行整合測試。順帶修正登入失敗計數永遠歸 1、永不鎖定的錯誤。
-2. **正式環境初始化**：一次性指令建立第一位店長（密碼由執行者輸入，不寫死）。
+2. ~~**正式環境初始化**~~（2026-11-13 完成）：`npm run db:create-admin`，密碼只能在提示時輸入（終端機不回顯），已有店長即拒絕，同時執行也只建立一位，寫入操作紀錄。
 3. **Email 通知**：用 Resend 實作 `booking.ts` 的 `notify()` 中 TODO；即時信、失敗重試；寄信失敗不影響預約。
 4. **每日 21:00 日報**：Vercel Cron 呼叫受 `CRON_SECRET` 保護的 Route Handler，彙整 `mode = digest` 的通知。
 5. **操作紀錄查詢頁**（僅店長）。

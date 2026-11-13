@@ -12,7 +12,8 @@
     "typecheck": "tsc --noEmit",
     "db:migrate": "node --env-file-if-exists=.env.local scripts/db.mjs migrate",
     "db:seed-dev": "node --env-file-if-exists=.env.local scripts/db.mjs seed-dev",
-    "db:reset": "node --env-file-if-exists=.env.local scripts/db.mjs reset"
+    "db:reset": "node --env-file-if-exists=.env.local scripts/db.mjs reset",
+    "db:create-admin": "node --env-file-if-exists=.env.local scripts/db.mjs create-admin"
   },
   "dependencies": {
     "next": "16.4.6",

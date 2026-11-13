@@ -11,8 +11,8 @@ Next.js 16（App Router）＋ TypeScript。
 npm install
 cp .env.example .env.local   # 填 DATABASE_URL（本機開發用 localhost 的資料庫）
 npm run dev                  # http://localhost:3000；本機資料庫會自動 migrate 並建立測試帳號
-npm test                     # 133 個核心規則單元測試（有設 TEST_DATABASE_URL 時另跑 12 個資料庫整合測試）
-npm run test:db              # 讀 .env.local 的 TEST_DATABASE_URL，跑全部 145 個測試
+npm test                     # 133 個核心規則單元測試（有設 TEST_DATABASE_URL 時另跑 17 個資料庫整合測試）
+npm run test:db              # 讀 .env.local 的 TEST_DATABASE_URL，跑全部 150 個測試
 npm run typecheck
 npm run build
 ```
@@ -22,6 +22,7 @@ npm run build
 | `npm run db:migrate` | 依序套用 `supabase/migrations/*.sql`（已套用的跳過，記錄在 `app_migrations`） |
 | `npm run db:seed-dev` | 建立開發用測試帳號（正式環境與遠端資料庫一律拒絕） |
 | `npm run db:reset` | 清空**本機**資料庫後重建（e2e 測試前用；非 localhost 拒絕執行） |
+| `npm run db:create-admin` | 正式環境初始化：建立第一位店長（見下方「建立 Supabase 專案」第 4 步） |
 
 本機資料庫開發時會自動建立測試帳號（正式環境、Supabase 都不會建立）：
 
@@ -60,8 +61,8 @@ src/lib/admin.ts    設定與帳號管理；班表類一律 預覽 → 儲存 �
 src/lib/auth/       scrypt 密碼雜湊、HttpOnly session（資料庫只存 token 雜湊）、角色檢查、登入失敗鎖定
 src/lib/data/       資料型別、PostgreSQL 連線（db.ts）、SQL 存取層（repo.ts，不含規則）
 supabase/migrations 資料表與初始設定（RLS 全開、不給任何 policy，Supabase 公開 API 讀寫不到）
-scripts/db.mjs      migrate / seed-dev / reset
-tests/integration/  資料庫整合測試：同時段鎖位、冪等、版本衝突、預約編號、班表重算、登入鎖定
+scripts/db.mjs      migrate / seed-dev / reset / create-admin
+tests/integration/  資料庫整合測試：同時段鎖位、冪等、版本衝突、預約編號、班表重算、登入鎖定、第一位店長初始化
 src/app/            頁面與 Server Actions（每個 action 都在伺服器端重新檢查角色）
 tests/e2e/          Playwright 完整操作測試（python3 tests/e2e/booking_flow.py http://localhost:3000 輸出資料夾）
 ```
@@ -87,7 +88,17 @@ tests/e2e/          Playwright 完整操作測試（python3 tests/e2e/booking_fl
 1. 建立專案，區域選 **Northeast Asia (Tokyo)**；方案建議 Pro（每日自動備份、不會閒置暫停）。
 2. Project Settings → Database → Connection string，複製 **Transaction pooler**（port 6543）的連線字串，結尾加上 `?sslmode=require`，填進 `.env.local`（或 Vercel 環境變數）的 `DATABASE_URL`。
 3. 執行 `npm run db:migrate` 建立資料表與初始設定（項目、醫師班表、營業時間、通知方式）。
-4. 第一位店長請用一次性初始化指令建立（下一步工作 2，尚未完成）。**不要對 Supabase 執行 `db:seed-dev`**（程式也會拒絕）。
+4. 建立第一位店長（一次性）：
+
+   ```bash
+   npm run db:create-admin
+   ```
+
+   依提示輸入登入帳號、顯示名稱、密碼（至少 10 字元、輸入時不顯示、需輸入兩次）。也可用 `npm run db:create-admin -- --login 帳號 --name 顯示名稱` 先帶入帳號與名稱，密碼仍須在提示時輸入。
+   - 密碼**不接受**命令列參數或環境變數，不會留在 shell 歷史；資料庫只存 scrypt 雜湊。
+   - 已有任何店長帳號時一律拒絕；之後的帳號請由店長在後台「帳號與權限」建立或重設密碼。
+   - 建立紀錄寫入操作紀錄（`bootstrap-admin`，不含密碼）。
+5. **不要對 Supabase 執行 `db:seed-dev`**（程式也會拒絕）：測試帳號使用公開的預設密碼。
 
 ### 並行與交易
 
@@ -110,7 +121,7 @@ tests/e2e/          Playwright 完整操作測試（python3 tests/e2e/booking_fl
 
 ## 已驗證
 
-- `npm test`：133 個核心規則測試全部通過；接上測試資料庫時 12 個整合測試也全部通過（共 145）。
+- `npm test`：133 個核心規則測試全部通過；接上測試資料庫時 17 個整合測試也全部通過（共 150）。
 - `tests/e2e/booking_flow.py`：接 PostgreSQL 後以桌面 1280px 與手機 390px 實際操作，20 項檢查全部通過，包括：
   - 錯誤帳密的提示，業務直接輸入 `/admin` 會被導回首頁。
   - 欄位錯誤顯示，上一步返回時資料保留。

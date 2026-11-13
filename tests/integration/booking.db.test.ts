@@ -3,13 +3,9 @@
  * 需要一個「可以清空」的 PostgreSQL：TEST_DATABASE_URL=postgres://… npm test
  * 未設定 TEST_DATABASE_URL 時整組略過（npm test 仍可只跑規則單元測試）。
  */
-import { readdirSync, readFileSync } from "node:fs";
-import path from "node:path";
-import postgres from "postgres";
+import type postgres from "postgres";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-
-const url = process.env.TEST_DATABASE_URL;
-const MIGRATIONS = path.resolve(__dirname, "../../supabase/migrations");
+import { resetTestDatabase, TEST_URL as url } from "./helpers";
 
 // 必須在 import 服務層之前設定，讓 lib/data/db.ts 連到測試資料庫
 if (url) process.env.DATABASE_URL = url;
@@ -41,15 +37,7 @@ describe.skipIf(!url)("資料庫整合（TEST_DATABASE_URL）", () => {
   });
 
   beforeAll(async () => {
-    const host = new URL(url!).hostname;
-    if (!["localhost", "127.0.0.1", "::1"].includes(host) && !/test/i.test(url!)) {
-      throw new Error("TEST_DATABASE_URL 會被清空：只接受 localhost 或名稱含 test 的資料庫。");
-    }
-    raw = postgres(url!, { prepare: false, max: 1, onnotice: () => {} });
-    await raw.unsafe("drop schema public cascade; create schema public;");
-    for (const f of readdirSync(MIGRATIONS).filter((x) => x.endsWith(".sql")).sort()) {
-      await raw.unsafe(readFileSync(path.join(MIGRATIONS, f), "utf8"));
-    }
+    raw = await resetTestDatabase();
     [booking, admin, repo, dbm] = await Promise.all([import("@/lib/booking"), import("@/lib/admin"), import("@/lib/data/repo"), import("@/lib/data/db")]);
 
     const q = dbm.sql();
