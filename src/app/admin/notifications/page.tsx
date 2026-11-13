@@ -2,10 +2,34 @@ import Link from "next/link";
 import { requireUser } from "@/lib/auth/session";
 import { listNotifications } from "@/lib/admin";
 import { AdminHeader, Footer } from "@/components/Chrome";
-import { markAllRead } from "../actions";
+import { ActionForm } from "@/components/ActionForm";
+import type { Notification } from "@/lib/data/types";
+import { taipeiTime } from "@/lib/notify/email";
+import { markAllRead, resendEmailAction } from "../actions";
 
 const EVENT = { sales_cancel: "業務取消", sales_edit_within_4h: "4 小時內修改", deputy_action: "代理店長操作", duplicate_phone: "重複電話", sales_edit: "業務修改" } as const;
 const MODE = { instant: "即時信", digest: "日報", none: "不寄信" } as const;
+
+/** 即時信的寄送狀態 */
+function EmailStatus({ n }: { n: Notification }) {
+  if (n.mode !== "instant") return <>{MODE[n.mode]}</>;
+  if (n.emailSentAt) return <>即時信<small>已寄出 {taipeiTime(n.emailSentAt)}</small></>;
+  if (n.emailNextAttemptAt && !n.emailError) return <>即時信<small>寄送中</small></>;
+  const stopped = !n.emailNextAttemptAt;
+  return (
+    <>
+      即時信
+      <small style={{ color: "var(--red)" }}>
+        {stopped ? "寄送失敗" : `寄送失敗，${taipeiTime(n.emailNextAttemptAt!)} 重試`}：{n.emailError}
+      </small>
+      {stopped && (
+        <ActionForm action={resendEmailAction} submit="重新寄送">
+          <input type="hidden" name="id" value={n.id} />
+        </ActionForm>
+      )}
+    </>
+  );
+}
 
 export default async function NotificationsPage() {
   const me = await requireUser(["admin", "deputy"]);
@@ -28,7 +52,7 @@ export default async function NotificationsPage() {
                     <td>{new Date(n.createdAt).toLocaleString("zh-TW", { timeZone: "Asia/Taipei", hour12: false })}{!n.readAt && <small style={{ color: "var(--red)" }}>未讀</small>}</td>
                     <td>{EVENT[n.event]}</td>
                     <td>{n.summary}</td>
-                    <td>{MODE[n.mode]}</td>
+                    <td><EmailStatus n={n} /></td>
                     <td>{n.appointmentId && <Link className="linkbtn" href={`/admin/appointments/${n.appointmentId}`}>查看 ↗</Link>}</td>
                   </tr>
                 ))}

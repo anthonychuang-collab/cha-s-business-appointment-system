@@ -238,19 +238,78 @@ export async function saveIdempotent(q: Q, key: string, appointmentId: string): 
 
 // ---------- 通知與稽核 ----------
 
-export async function insertNotification(q: Q, n: Omit<Notification, "id" | "readAt" | "createdAt">): Promise<void> {
+/** 即時信的通知寫入後立刻排入寄送（email_next_attempt_at = now()） */
+export async function insertNotification(
+  q: Q, n: Pick<Notification, "event" | "appointmentId" | "actorUserId" | "summary" | "mode" | "payload">,
+): Promise<void> {
   await q`
-    insert into notifications (event_type, appointment_id, actor_user_id, summary, email_mode)
-    values (${n.event}, ${n.appointmentId}, ${n.actorUserId}, ${n.summary}, ${n.mode})`;
+    insert into notifications (event_type, appointment_id, actor_user_id, summary, email_mode, payload, email_next_attempt_at)
+    values (${n.event}, ${n.appointmentId}, ${n.actorUserId}, ${n.summary}, ${n.mode}, ${q.json(n.payload as never)},
+      ${n.mode === "instant" ? q`now()` : null})`;
 }
+
+const mapNotification = (r: Row): Notification => ({
+  id: String(r.id), event: r.event_type as NotifyEvent, appointmentId: r.appointment_id == null ? null : String(r.appointment_id),
+  actorUserId: String(r.actor_user_id), summary: String(r.summary), mode: r.email_mode as NotifyMode,
+  readAt: isoOrNull(r.read_at), createdAt: iso(r.created_at), payload: (r.payload as Record<string, unknown>) ?? {},
+  emailSentAt: isoOrNull(r.email_sent_at), emailError: (r.email_error as string | null) ?? null,
+  emailAttempts: Number(r.email_attempts ?? 0), emailNextAttemptAt: isoOrNull(r.email_next_attempt_at),
+});
 
 export async function listNotifications(q: Q, limit: number): Promise<Notification[]> {
   const rows = await q`select * from notifications order by created_at desc limit ${limit}`;
-  return rows.map((r) => ({
-    id: String(r.id), event: r.event_type as NotifyEvent, appointmentId: r.appointment_id == null ? null : String(r.appointment_id),
-    actorUserId: String(r.actor_user_id), summary: String(r.summary), mode: r.email_mode as NotifyMode,
-    readAt: isoOrNull(r.read_at), createdAt: iso(r.created_at),
-  }));
+  return rows.map(mapNotification);
+}
+
+/** 重試間隔（分鐘），依第幾次嘗試；最後一個值之後沿用 */
+export const EMAIL_BACKOFF_MIN = [1, 5, 30, 120, 720];
+
+/**
+ * 取出到期要寄的即時信，同時把下一次嘗試時間往後推（租約）並把嘗試次數 +1。
+ * SKIP LOCKED：多個程序同時寄送時各拿不同的信，不會重複寄。
+ */
+export async function claimDueEmails(q: Q, limit: number): Promise<Notification[]> {
+  const rows = await q`
+    with due as (
+      select id from notifications
+      where email_mode = 'instant' and email_sent_at is null and email_next_attempt_at <= now()
+      order by email_next_attempt_at, created_at
+      limit ${limit}
+      for update skip locked
+    )
+    update notifications n set
+      email_attempts = n.email_attempts + 1,
+      email_next_attempt_at = now() + make_interval(mins => (${EMAIL_BACKOFF_MIN}::int[])[least(n.email_attempts + 1, ${EMAIL_BACKOFF_MIN.length})])
+    from due where n.id = due.id
+    returning n.*`;
+  return rows.map(mapNotification);
+}
+
+export async function markEmailSent(q: Q, id: string, messageId: string): Promise<void> {
+  await q`update notifications set email_sent_at = now(), email_next_attempt_at = null, email_error = null, email_message_id = ${messageId} where id = ${id}`;
+}
+
+/** stop = true：不再重試（設定錯誤或已達次數上限）；否則保留租約時間，到期再試 */
+export async function markEmailFailed(q: Q, id: string, error: string, stop: boolean): Promise<void> {
+  if (stop) await q`update notifications set email_error = ${error}, email_next_attempt_at = null where id = ${id}`;
+  else await q`update notifications set email_error = ${error} where id = ${id}`;
+}
+
+/** 店長手動重寄（例如補上收件地址或修好寄件網域後）；回傳是否有排入 */
+export async function requeueEmail(q: Q, id: string): Promise<boolean> {
+  if (!isUuid(id)) return false;
+  const rows = await q`
+    update notifications set email_next_attempt_at = now(), email_attempts = 0
+    where id = ${id} and email_mode = 'instant' and email_sent_at is null
+    returning id`;
+  return rows.length === 1;
+}
+
+export async function findUserNames(q: Q, ids: string[]): Promise<Map<string, string>> {
+  const valid = [...new Set(ids)].filter(isUuid);
+  if (!valid.length) return new Map();
+  const rows = await q`select id, display_name from user_accounts where id = any(${valid}::uuid[])`;
+  return new Map(rows.map((r) => [String(r.id), String(r.display_name)]));
 }
 
 export async function unreadNotificationCount(q: Q): Promise<number> {

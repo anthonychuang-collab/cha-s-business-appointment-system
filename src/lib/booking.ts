@@ -22,6 +22,8 @@ import { evaluateConflict, recomputeConflicts, type ConflictChange } from "@/lib
 import { normalizePhone } from "@/lib/domain/phone";
 import { addDays, minutesUntil, toTaipei } from "@/lib/domain/time";
 import { endOf, RULE_MESSAGE } from "@/lib/format";
+import { describeChanges, snapshotOf, type NotificationPayload } from "@/lib/notify/email";
+import { scheduleEmailDelivery } from "@/lib/notify/deliver";
 
 export type Fail = { ok: false; code: string; message: string; field?: string };
 const fail = (code: string, message = RULE_MESSAGE[code] ?? "操作失敗，請稍後再試。", field?: string): Fail => ({ ok: false, code, message, field });
@@ -30,6 +32,8 @@ const fail = (code: string, message = RULE_MESSAGE[code] ?? "操作失敗，請�
 interface Ctx {
   q: Q;
   ref: Ref;
+  /** 交易內產生了即時信 → 交易提交後寄送 */
+  emailQueued: boolean;
 }
 
 // ---------- 讀取 ----------
@@ -64,7 +68,7 @@ async function slotsFor(c: Ctx, date: string, requiresDoctor: boolean, excludeId
 }
 
 export async function salesSlots(date: string, requiresDoctor: boolean, excludeId?: string): Promise<Slot[]> {
-  return slotsFor({ q: sql(), ref: await pageRef() }, date, requiresDoctor, excludeId);
+  return slotsFor({ q: sql(), ref: await pageRef(), emailQueued: false }, date, requiresDoctor, excludeId);
 }
 
 /** 某月每一天是否還有可約時段（日期元件停用用）；整個月只查一次資料庫 */
@@ -103,10 +107,21 @@ export async function listOwnAppointments(salespersonId: string): Promise<Appoin
 
 // ---------- 通知與稽核 ----------
 
-async function notify(c: Ctx, event: NotifyEvent, appointmentId: string | null, actor: UserAccount, summary: string) {
+/**
+ * 寫入後台通知（一律寫入，規格 7.3），並附上寄信用的預約摘要與差異。
+ * 即時信不在交易內寄送：交易提交後才由 lib/notify/deliver.ts 寄出，寄信失敗不影響預約。
+ */
+async function notify(
+  c: Ctx, event: NotifyEvent, a: Appointment, actor: UserAccount, summary: string,
+  extra: { changes?: Record<string, unknown>; related?: Appointment[] } = {},
+) {
   const mode = c.ref.settings.notifyModes[event];
-  await repo.insertNotification(c.q, { event, appointmentId, actorUserId: actor.id, summary, mode });
-  // TODO（下一步 3）：mode === "instant" 時以 Resend 寄信給 settings.notifyEmails；在交易提交後寄送，失敗記錄並重試，不影響預約結果。
+  const names = namesOf(c.ref);
+  const payload: NotificationPayload = { appointment: snapshotOf(a, names) };
+  if (extra.changes) payload.changes = describeChanges(extra.changes, names);
+  if (extra.related?.length) payload.related = extra.related.map((r) => snapshotOf(r, names));
+  await repo.insertNotification(c.q, { event, appointmentId: a.id, actorUserId: actor.id, summary, mode, payload: { ...payload } });
+  if (mode === "instant") c.emailQueued = true;
 }
 
 async function audit(c: Ctx, entityId: string, actor: UserAccount, action: string, changes: Record<string, unknown> = {}, reason = "") {
@@ -114,8 +129,8 @@ async function audit(c: Ctx, entityId: string, actor: UserAccount, action: strin
 }
 
 /** 代理店長的每個預約操作都要通知店長（規格 7.4） */
-async function notifyIfDeputy(c: Ctx, actor: UserAccount, a: Appointment, what: string) {
-  if (actor.role === "deputy") await notify(c, "deputy_action", a.id, actor, `${actor.displayName}${what}：${a.date} ${a.start} ${a.customerName}`);
+async function notifyIfDeputy(c: Ctx, actor: UserAccount, a: Appointment, what: string, changes?: Record<string, unknown>) {
+  if (actor.role === "deputy") await notify(c, "deputy_action", a, actor, `${actor.displayName}${what}：${a.date} ${a.start} ${a.customerName}`, { changes });
 }
 
 /** 當日流水號；取當日編號鎖，兩筆同日預約不會拿到同一個編號 */
@@ -130,12 +145,18 @@ async function save(c: Ctx, a: Appointment, expectedVersion: number) {
   if (!(await repo.saveAppointment(c.q, a, expectedVersion))) throw new Error(`appointment ${a.id} version changed during transaction`);
 }
 
-/** 交易開頭：班表共用鎖 + 讀取設定類資料 */
-function bookingTx<T>(fn: (c: Ctx) => Promise<T>): Promise<T> {
-  return withTx(async (q) => {
+/** 交易開頭：班表共用鎖 + 讀取設定類資料；交易提交後才排寄信（回滾就不寄） */
+async function bookingTx<T>(fn: (c: Ctx) => Promise<T>): Promise<T> {
+  let emailQueued = false;
+  const result = await withTx(async (q) => {
     await repo.lockSchedule(q, "shared");
-    return fn({ q, ref: await repo.loadRef(q) });
+    const c: Ctx = { q, ref: await repo.loadRef(q), emailQueued: false };
+    const r = await fn(c);
+    emailQueued = c.emailQueued;
+    return r;
   });
+  if (emailQueued) scheduleEmailDelivery();
+  return result;
 }
 
 // ---------- 輸入驗證 ----------
@@ -174,9 +195,9 @@ function validateSlotInput(date: string, start: string): Fail | null {
   return null;
 }
 
-async function hasFutureBookingWithPhone(q: Q, phone: string, excludeId?: string): Promise<boolean> {
-  const list = await repo.listAppointments(q, { phoneNormalized: normalizePhone(phone), status: "active", dateFrom: todayTaipei(), excludeId, limit: 1 });
-  return list.length > 0;
+/** 同一支電話的其他未來有效預約（最多 5 筆，供重複警告與通知內容） */
+function futureBookingsWithPhone(q: Q, phone: string, excludeId?: string): Promise<Appointment[]> {
+  return repo.listAppointments(q, { phoneNormalized: normalizePhone(phone), status: "active", dateFrom: todayTaipei(), excludeId, limit: 5 });
 }
 
 /** 依可約時段結果決定醫師；多位醫師時須指定 */
@@ -213,7 +234,8 @@ export function createSalesAppointment(actor: UserAccount, salespersonId: string
     const doctor = pickDoctor(slot, input.requiresDoctor, input.doctorId);
     if (doctor !== null && typeof doctor === "object") return doctor;
 
-    const dup = await hasFutureBookingWithPhone(c.q, input.phone);
+    const samePhone = await futureBookingsWithPhone(c.q, input.phone);
+    const dup = samePhone.length > 0;
     if (dup && !confirmDuplicate) return { ok: false, code: "DUPLICATE_PHONE", message: "此電話已有預約，確定要再建立一筆嗎？" };
 
     const now = new Date().toISOString();
@@ -230,7 +252,7 @@ export function createSalesAppointment(actor: UserAccount, salespersonId: string
     await repo.insertAppointment(c.q, a);
     await repo.saveIdempotent(c.q, idemKey, a.id);
     await audit(c, a.id, actor, "create");
-    if (dup) await notify(c, "duplicate_phone", a.id, actor, `重複電話預約：${a.customerName} ${a.phone}（${namesOf(c.ref).salespersonName(salespersonId)}）`);
+    if (dup) await notify(c, "duplicate_phone", a, actor, `重複電話預約：${a.customerName} ${a.phone}（${namesOf(c.ref).salespersonName(salespersonId)}）`, { related: samePhone });
     return { ok: true, id: a.id };
   });
 }
@@ -318,12 +340,13 @@ export function updateSalesAppointment(actor: UserAccount, salespersonId: string
     a.updatedAt = now;
     a.version += 1;
     await save(c, a, version);
-    await audit(c, a.id, actor, ruleChanges.cancel ? "cancel" : "update", diff(found, a));
+    const changed = diff(found, a);
+    await audit(c, a.id, actor, ruleChanges.cancel ? "cancel" : "update", changed);
 
     const label = `${a.date} ${a.start} ${a.customerName}`;
-    if (ruleChanges.cancel) await notify(c, "sales_cancel", a.id, actor, `${actor.displayName} 取消預約：${label}`);
-    else if (r.notifyWithin4h) await notify(c, "sales_edit_within_4h", a.id, actor, `${actor.displayName} 於 4 小時內修改：${label}`);
-    else await notify(c, "sales_edit", a.id, actor, `${actor.displayName} 修改預約：${label}`);
+    if (ruleChanges.cancel) await notify(c, "sales_cancel", a, actor, `${actor.displayName} 取消預約：${label}`, { changes: changed });
+    else if (r.notifyWithin4h) await notify(c, "sales_edit_within_4h", a, actor, `${actor.displayName} 於 4 小時內修改：${label}`, { changes: changed });
+    else await notify(c, "sales_edit", a, actor, `${actor.displayName} 修改預約：${label}`, { changes: changed });
     return { ok: true };
   });
 }
@@ -409,7 +432,7 @@ export function adminSetStatus(actor: UserAccount, id: string, version: number, 
     a.updatedBy = actor.id; a.updatedAt = new Date().toISOString(); a.version += 1;
     await save(c, a, version);
     await audit(c, a.id, actor, `status:${status}`, { status: { from, to: status } });
-    await notifyIfDeputy(c, actor, a, ` 將狀態改為 ${status}`);
+    await notifyIfDeputy(c, actor, a, ` 將狀態改為 ${status}`, diff(found, a));
     return { ok: true };
   });
 }
@@ -427,7 +450,7 @@ export function adminKeepConflict(actor: UserAccount, id: string, version: numbe
     a.updatedBy = actor.id; a.updatedAt = new Date().toISOString(); a.version += 1;
     await save(c, a, version);
     await audit(c, a.id, actor, "keep-conflict", {}, note.trim());
-    await notifyIfDeputy(c, actor, a, " 標記衝突保留");
+    await notifyIfDeputy(c, actor, a, " 標記衝突保留", diff(found, a));
     return { ok: true };
   });
 }
@@ -443,7 +466,7 @@ export function adminReassign(actor: UserAccount, id: string, version: number, s
     a.updatedBy = actor.id; a.updatedAt = new Date().toISOString(); a.version += 1;
     await save(c, a, version);
     await audit(c, a.id, actor, "reassign", { salespersonId: { from, to: salespersonId } });
-    await notifyIfDeputy(c, actor, a, " 轉換負責業務");
+    await notifyIfDeputy(c, actor, a, " 轉換負責業務", diff(found, a));
     return { ok: true };
   });
 }
@@ -515,7 +538,7 @@ export function adminReschedule(actor: UserAccount, id: string, version: number,
     };
     await save(c, a, version);
     await audit(c, a.id, actor, "reschedule", diff(found, a), a.overbookReason);
-    await notifyIfDeputy(c, actor, a, " 改期");
+    await notifyIfDeputy(c, actor, a, " 改期", diff(found, a));
     return { ok: true, id: a.id };
   });
 }
@@ -536,7 +559,7 @@ export function adminUpdateBasics(actor: UserAccount, id: string, version: numbe
     };
     await save(c, a, version);
     await audit(c, a.id, actor, "update", diff(found, a));
-    await notifyIfDeputy(c, actor, a, " 修改預約");
+    await notifyIfDeputy(c, actor, a, " 修改預約", diff(found, a));
     return { ok: true };
   });
 }

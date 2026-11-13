@@ -5,7 +5,7 @@
 ## 這是什麼
 
 診所內部預約系統：業務用個人帳號替客戶預約、管理自己名下的預約；店長在後台管理全院預約、班表、設定與帳號。
-目前狀態：**前後台頁面與所有預約規則已完成並通過測試；資料已存 PostgreSQL（Supabase），並有並行整合測試。正式環境用 `npm run db:create-admin` 建立第一位店長。尚未寄信。**
+目前狀態：**前後台頁面與所有預約規則已完成並通過測試；資料已存 PostgreSQL（Supabase），並有並行整合測試。正式環境用 `npm run db:create-admin` 建立第一位店長；即時信以 Resend 寄送並自動重試。尚未做每日日報。**
 
 ## 必讀文件（依序）
 
@@ -20,8 +20,8 @@
 npm install
 cp .env.example .env.local   # 填 DATABASE_URL、TEST_DATABASE_URL（本機 PostgreSQL）
 npm run dev        # 開發伺服器；本機資料庫會自動 migrate 並建立 dev-admin / dev-sales-a / dev-sales-b / dev-deputy
-npm test           # 133 個規則單元測試（設了 TEST_DATABASE_URL 時另跑資料庫整合測試）
-npm run test:db    # 讀 .env.local，跑全部 150 個（含並行整合測試；會清空 TEST_DATABASE_URL）
+npm test           # 141 個規則與信件內容單元測試（設了 TEST_DATABASE_URL 時另跑資料庫整合測試）
+npm run test:db    # 讀 .env.local，跑全部 171 個（含並行整合測試；會清空 TEST_DATABASE_URL）
 npm run typecheck
 npm run build
 npm run db:reset   # 清空本機資料庫並重建（e2e 前先跑）
@@ -38,7 +38,8 @@ python3 tests/e2e/booking_flow.py http://localhost:3000 e2e-shots   # Playwright
 - **權限在伺服器端檢查**：每個 Server Action 開頭都要 `requireUser([...角色])`。業務查不到別人的預約一律回 404。
 - **並行安全**：寫入一律在 `withTx` 交易內，取鎖順序固定：班表鎖（預約寫入共用、班表異動獨占）→ 冪等鍵 → 預約列 `FOR UPDATE` → 時段鎖 `pg_advisory_xact_lock(hashtext(date || start))` → 當日編號鎖。Supabase 連線池為 transaction 模式，只能用交易層級鎖、`prepare: false`。改動並行邏輯時先在 `tests/integration/` 加測試。
 - **資料表變更**：只新增 `supabase/migrations/` 的新檔（檔名時間戳遞增），不要改已套用的舊檔；新資料表要加進 RLS 區塊。
-- **時間一律台北時間**：使用 `src/lib/domain/time.ts`，不可依賴主機時區（Vercel 為 UTC）。
+- **時間一律台北時間**：使用 `src/lib/domain/time.ts`，不可依賴主機時區（Vercel 為 UTC）；伺服器端也不要用 `toLocaleString` 產生要比對或寄出的文字（各主機 ICU 輸出不同，例如空白字元），用 `lib/notify/email.ts` 的 `taipeiTime()`。
+- **通知與寄信**：事件一律在預約交易內呼叫 `notify()` 寫入（含寄信用的 payload），**絕不在交易內寄信**；交易提交後由 `lib/notify/deliver.ts` 寄送。信件內容只在 `lib/notify/email.ts` 產生，照護備註永遠只寫「已修改」。
 - **介面全部繁體中文**；顏色、字體、間距只改 `src/app/globals.css` 的 `:root` 變數。
 - **不可放假資料或示範人名進正式環境**；不可在前端寫固定密碼；不可把姓名、電話、照護備註放進網址或 localStorage。
 
@@ -53,8 +54,8 @@ python3 tests/e2e/booking_flow.py http://localhost:3000 e2e-shots   # Playwright
 
 1. ~~**接 Supabase**~~（2026-11-13 完成）：migration、`repo.ts` 存取層、session／冪等／登入失敗存資料庫、並行整合測試。順帶修正登入失敗計數永遠歸 1、永不鎖定的錯誤。
 2. ~~**正式環境初始化**~~（2026-11-13 完成）：`npm run db:create-admin`，密碼只能在提示時輸入（終端機不回顯），已有店長即拒絕，同時執行也只建立一位，寫入操作紀錄。
-3. **Email 通知**：用 Resend 實作 `booking.ts` 的 `notify()` 中 TODO；即時信、失敗重試；寄信失敗不影響預約。
-4. **每日 21:00 日報**：Vercel Cron 呼叫受 `CRON_SECRET` 保護的 Route Handler，彙整 `mode = digest` 的通知。
+3. ~~**Email 通知**~~（2026-11-13 完成）：outbox＋`after()` 寄送、退避重試、設定錯誤停止並可手動重寄、`SKIP LOCKED`＋Resend 冪等鍵防重複。日報要用的 `notifications.payload`（預約摘要與差異）已一併寫入。
+4. **每日 21:00 日報**：Vercel Cron 呼叫受 `CRON_SECRET` 保護的 Route Handler，彙整 `mode = digest` 的通知；同一個排程也呼叫 `deliverPendingEmails()` 補寄到期的即時信重試。
 5. **操作紀錄查詢頁**（僅店長）。
 6. **部署**到 Vercel，撰寫備份／還原說明。
 

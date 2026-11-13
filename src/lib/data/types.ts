@@ -83,6 +83,13 @@ export interface Notification {
   mode: NotifyMode;
   readAt: string | null;
   createdAt: string;
+  /** 事件當下的預約摘要與差異（寄信用，見 lib/notify/email.ts） */
+  payload: Record<string, unknown>;
+  emailSentAt: string | null;
+  emailError: string | null;
+  emailAttempts: number;
+  /** 下一次寄送嘗試時間；null = 不需要再寄 */
+  emailNextAttemptAt: string | null;
 }
 
 export interface AuditLog {

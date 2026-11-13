@@ -8,6 +8,7 @@ import type { ScheduleData } from "@/lib/domain/schedule";
 import { hashPassword } from "@/lib/auth/password";
 import { revokeSessions } from "@/lib/auth/session";
 import { applyConflictRecompute, previewConflicts, scheduleData, todayTaipei } from "@/lib/booking";
+import { scheduleEmailDelivery } from "@/lib/notify/deliver";
 
 export type Affected = { id: string; label: string; reasons: string[] }[];
 export type ScheduleOutcome =
@@ -268,5 +269,12 @@ export function transferFutureAppointments(actor: UserAccount, fromSalespersonId
 
 export const listNotifications = (limit = 200) => repo.listNotifications(sql(), limit);
 export const markAllNotificationsRead = () => repo.markAllNotificationsRead(sql());
+
+/** 重新排入寄送，並在回應送出後立即嘗試 */
+export async function resendNotificationEmail(id: string): Promise<boolean> {
+  const ok = await repo.requeueEmail(sql(), id);
+  if (ok) scheduleEmailDelivery();
+  return ok;
+}
 export const itemsInUse = () => repo.itemsInUse(sql());
 export const futureCountBySalesperson = () => repo.futureCountBySalesperson(sql(), todayTaipei());

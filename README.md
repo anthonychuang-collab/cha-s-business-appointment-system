@@ -11,8 +11,8 @@ Next.js 16（App Router）＋ TypeScript。
 npm install
 cp .env.example .env.local   # 填 DATABASE_URL（本機開發用 localhost 的資料庫）
 npm run dev                  # http://localhost:3000；本機資料庫會自動 migrate 並建立測試帳號
-npm test                     # 133 個核心規則單元測試（有設 TEST_DATABASE_URL 時另跑 17 個資料庫整合測試）
-npm run test:db              # 讀 .env.local 的 TEST_DATABASE_URL，跑全部 150 個測試
+npm test                     # 141 個規則與信件內容單元測試（有設 TEST_DATABASE_URL 時另跑 30 個資料庫整合測試）
+npm run test:db              # 讀 .env.local 的 TEST_DATABASE_URL，跑全部 171 個測試
 npm run typecheck
 npm run build
 ```
@@ -62,7 +62,8 @@ src/lib/auth/       scrypt 密碼雜湊、HttpOnly session（資料庫只存 tok
 src/lib/data/       資料型別、PostgreSQL 連線（db.ts）、SQL 存取層（repo.ts，不含規則）
 supabase/migrations 資料表與初始設定（RLS 全開、不給任何 policy，Supabase 公開 API 讀寫不到）
 scripts/db.mjs      migrate / seed-dev / reset / create-admin
-tests/integration/  資料庫整合測試：同時段鎖位、冪等、版本衝突、預約編號、班表重算、登入鎖定、第一位店長初始化
+src/lib/notify/     Email 通知：內容（email.ts，純函式）、寄送與重試（deliver.ts）、Resend／開發用寄信（transport.ts）
+tests/integration/  資料庫整合測試：同時段鎖位、冪等、版本衝突、預約編號、班表重算、登入鎖定、第一位店長初始化、即時信寄送與重試
 src/app/            頁面與 Server Actions（每個 action 都在伺服器端重新檢查角色）
 tests/e2e/          Playwright 完整操作測試（python3 tests/e2e/booking_flow.py http://localhost:3000 輸出資料夾）
 ```
@@ -113,15 +114,25 @@ tests/e2e/          Playwright 完整操作測試（python3 tests/e2e/booking_fl
 - 規格第 8 節的 `schedule_rules` 依程式型別拆成 `opening_rules`（營業時間）與 `schedule_blocks`（封鎖／請假），語意不變。
 - 預約日期與時段以台北本地 `date` / `time` 保存；稽核、通知、session 用 `timestamptz`。
 
+## Email 通知（Resend）
+
+- 設定 `RESEND_API_KEY`、`NOTIFY_FROM`（寄件網域需先在 Resend 驗證 DNS）、`APP_BASE_URL`；收件地址在後台「項目與營業 → 通知設定」。
+- 流程（outbox）：通知與預約在同一交易寫入 → 交易提交、回應送出後（`after()`）才寄出。寄信失敗或 Resend 當機都不影響預約。
+- 重試：失敗後 1、5、30、120、720 分鐘再試，最多 6 次。到期的重試會在下一筆即時信、任何登入後的頁面瀏覽（每台伺服器每分鐘最多一次）時處理。
+- 停止重試：金鑰錯誤、寄件網域未驗證、未設定收件地址等設定問題，或達到 6 次。後台通知清單顯示原因，修好後按「重新寄送」。
+- 不重複寄出：多個程序同時寄送時以 `FOR UPDATE SKIP LOCKED` 分配；同一封信的重試帶相同的 `Idempotency-Key`，Resend 不會寄兩次。
+- 內容：事件、操作者、預約摘要、修改前後、後台連結；照護備註只寫「已修改」；不含密碼或憑證（`src/lib/notify/email.ts`，有單元測試）。
+- 開發環境沒有設定 Resend 時只在終端機印出主旨與收件人。
+
 ## 尚未完成
 
-- Email 寄送（Resend）與每日 21:00 日報排程。目前所有事件只出現在後台「通知」，`booking.ts` 的 `notify()` 留有 TODO。
+- 每日 21:00 日報排程（「日報」事件目前只出現在後台通知清單）。
 - 操作紀錄的獨立查詢頁（目前只在預約詳情顯示該筆的紀錄）。
 - 正式環境的備份與還原。
 
 ## 已驗證
 
-- `npm test`：133 個核心規則測試全部通過；接上測試資料庫時 17 個整合測試也全部通過（共 150）。
+- `npm test`：141 個規則與信件內容測試全部通過；接上測試資料庫時 30 個整合測試也全部通過（共 171）。
 - `tests/e2e/booking_flow.py`：接 PostgreSQL 後以桌面 1280px 與手機 390px 實際操作，20 項檢查全部通過，包括：
   - 錯誤帳密的提示，業務直接輸入 `/admin` 會被導回首頁。
   - 欄位錯誤顯示，上一步返回時資料保留。
