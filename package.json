@@ -13,7 +13,9 @@
     "db:migrate": "node --env-file-if-exists=.env.local scripts/db.mjs migrate",
     "db:seed-dev": "node --env-file-if-exists=.env.local scripts/db.mjs seed-dev",
     "db:reset": "node --env-file-if-exists=.env.local scripts/db.mjs reset",
-    "db:create-admin": "node --env-file-if-exists=.env.local scripts/db.mjs create-admin"
+    "db:create-admin": "node --env-file-if-exists=.env.local scripts/db.mjs create-admin",
+    "db:backup": "bash scripts/backup.sh",
+    "db:restore": "bash scripts/restore.sh"
   },
   "dependencies": {
     "next": "16.4.6",
@@ -28,5 +30,8 @@
     "@types/react-dom": "^19",
     "typescript": "^5",
     "vitest": "^5.1.0"
+  },
+  "engines": {
+    "node": ">=22"
   }
 }

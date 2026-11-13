@@ -11,8 +11,8 @@ Next.js 16（App Router）＋ TypeScript。
 npm install
 cp .env.example .env.local   # 填 DATABASE_URL（本機開發用 localhost 的資料庫）
 npm run dev                  # http://localhost:3000；本機資料庫會自動 migrate 並建立測試帳號
-npm test                     # 148 個規則、信件與紀錄格式單元測試（有設 TEST_DATABASE_URL 時另跑 45 個資料庫整合測試）
-npm run test:db              # 讀 .env.local 的 TEST_DATABASE_URL，跑全部 193 個測試
+npm test                     # 149 個規則、信件與紀錄格式單元測試（有設 TEST_DATABASE_URL 時另跑 48 個資料庫整合測試）
+npm run test:db              # 讀 .env.local 的 TEST_DATABASE_URL，跑全部 197 個測試
 npm run typecheck
 npm run build
 ```
@@ -83,6 +83,14 @@ tests/e2e/          Playwright 完整操作測試（python3 tests/e2e/booking_fl
 - 素材包把「負責業務」下拉選單放在第一步；規格已決定負責業務就是登入者，所以只顯示文字，不提供選單。
 - 素材包建議「項目對應醫師需求」由後台設定；規格是由業務在第二步自己選「是否需要醫師」，這裡沿用規格。若之後要改成依項目自動帶入，只需改第二步的元件。
 
+## 部署與維運
+
+上線步驟、環境變數、日常檢查、備份與還原：見 **[docs/部署與維運.md](docs/部署與維運.md)**。
+
+- `/api/health`：不帶金鑰只回 `{ ok }`；帶 `Authorization: Bearer <CRON_SECRET>` 列出各項設定是否完成（不含任何值）
+- `npm run db:backup`／`npm run db:restore`：加密離線備份（pg_dump＋gpg AES-256）與還原到空資料庫
+- `vercel.json`：函式區域東京（hnd1）、每日 21:00 排程；`next.config.ts`：安全標頭（禁止嵌入、noindex 等）
+
 ## 資料庫（Supabase）
 
 資料存在 PostgreSQL。程式只透過伺服器端的資料庫連線字串存取，不使用 Supabase 的 JS SDK、anon key 或 Auth。
@@ -142,11 +150,12 @@ tests/e2e/          Playwright 完整操作測試（python3 tests/e2e/booking_fl
 
 ## 尚未完成
 
-- 正式環境的備份與還原。
+- 實際部署到 Vercel 與 Supabase：程式與手冊已備妥，需使用者的帳號，照 [docs/部署與維運.md](docs/部署與維運.md)「一、上線」執行。
 
 ## 已驗證
 
-- `npm test`：148 個規則、信件與紀錄格式測試全部通過；接上測試資料庫時 45 個整合測試也全部通過（共 193）。
+- `npm test`：149 個規則、信件與紀錄格式測試全部通過；接上測試資料庫時 48 個整合測試也全部通過（共 197）。
+- 備份還原：本機實測備份 → 還原到新資料庫，16 張資料表逐列比對完全相同；錯誤密碼、損壞檔案、非空資料庫都會拒絕且不留下資料；模擬 Supabase 預設權限，還原後公開角色無法讀取。
 - `tests/e2e/booking_flow.py`：接 PostgreSQL 後以桌面 1280px 與手機 390px 實際操作，20 項檢查全部通過，包括：
   - 錯誤帳密的提示，業務直接輸入 `/admin` 會被導回首頁。
   - 欄位錯誤顯示，上一步返回時資料保留。

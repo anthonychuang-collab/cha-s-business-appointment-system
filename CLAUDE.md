@@ -5,7 +5,7 @@
 ## 這是什麼
 
 診所內部預約系統：業務用個人帳號替客戶預約、管理自己名下的預約；店長在後台管理全院預約、班表、設定與帳號。
-目前狀態：**前後台頁面與所有預約規則已完成並通過測試；資料已存 PostgreSQL（Supabase），並有並行整合測試。正式環境用 `npm run db:create-admin` 建立第一位店長；即時信以 Resend 寄送並自動重試；每日 21:00 日報由 Vercel Cron 觸發。**
+目前狀態：**前後台頁面與所有預約規則已完成並通過測試；資料已存 PostgreSQL（Supabase），並有並行整合測試。正式環境用 `npm run db:create-admin` 建立第一位店長；即時信以 Resend 寄送並自動重試；每日 21:00 日報由 Vercel Cron 觸發；部署設定、健康檢查與加密備份／還原已備妥，尚待以使用者帳號實際部署（`docs/部署與維運.md`）。**
 
 ## 必讀文件（依序）
 
@@ -13,6 +13,7 @@
 2. `docs/診所預約系統_Claude_Code開發規格.md`：欄位、資料表、權限、規則細節。**第 12 節是最新決策，衝突時以它為準**
 3. `README.md`：頁面清單、程式結構、Supabase 設定與並行設計
 4. `docs/design-kit/CLAUDE_CODE_BRIEF.md`：視覺規範（已套用於 `src/app/globals.css`）
+5. `docs/部署與維運.md`：上線、日常維運、備份與還原（改到部署、環境變數、資料表時一併更新）
 
 ## 常用指令
 
@@ -20,8 +21,8 @@
 npm install
 cp .env.example .env.local   # 填 DATABASE_URL、TEST_DATABASE_URL（本機 PostgreSQL）
 npm run dev        # 開發伺服器；本機資料庫會自動 migrate 並建立 dev-admin / dev-sales-a / dev-sales-b / dev-deputy
-npm test           # 148 個規則、信件與紀錄格式單元測試（設了 TEST_DATABASE_URL 時另跑資料庫整合測試）
-npm run test:db    # 讀 .env.local，跑全部 193 個（含並行整合測試；會清空 TEST_DATABASE_URL）
+npm test           # 149 個規則、信件與紀錄格式單元測試（設了 TEST_DATABASE_URL 時另跑資料庫整合測試）
+npm run test:db    # 讀 .env.local，跑全部 197 個（含並行整合測試；會清空 TEST_DATABASE_URL）
 npm run typecheck
 npm run build
 npm run db:reset   # 清空本機資料庫並重建（e2e 前先跑）
@@ -37,7 +38,7 @@ python3 tests/e2e/booking_flow.py http://localhost:3000 e2e-shots   # Playwright
 - **所有預約讀寫只經過 `src/lib/booking.ts`**；設定與帳號經過 `src/lib/admin.ts`。頁面與 Server Action 不直接改資料。SQL 只寫在 `src/lib/data/repo.ts`（不放規則）；頁面讀設定類資料用 `pageRef()`（每個請求只查一次）。
 - **權限在伺服器端檢查**：每個 Server Action 開頭都要 `requireUser([...角色])`。業務查不到別人的預約一律回 404。
 - **並行安全**：寫入一律在 `withTx` 交易內，取鎖順序固定：班表鎖（預約寫入共用、班表異動獨占）→ 冪等鍵 → 預約列 `FOR UPDATE` → 時段鎖 `pg_advisory_xact_lock(hashtext(date || start))` → 當日編號鎖。Supabase 連線池為 transaction 模式，只能用交易層級鎖、`prepare: false`。改動並行邏輯時先在 `tests/integration/` 加測試。
-- **資料表變更**：只新增 `supabase/migrations/` 的新檔（檔名時間戳遞增），不要改已套用的舊檔；新資料表要加進 RLS 區塊。
+- **資料表變更**：只新增 `supabase/migrations/` 的新檔（檔名時間戳遞增），不要改已套用的舊檔；新資料表要開 RLS 並 revoke anon／authenticated；同時更新 `src/lib/data/schema-version.ts`（有測試檢查）。migration 必須相容於舊版程式（先 migrate 再部署）。
 - **時間一律台北時間**：使用 `src/lib/domain/time.ts`，不可依賴主機時區（Vercel 為 UTC）；伺服器端也不要用 `toLocaleString` 產生要比對或寄出的文字（各主機 ICU 輸出不同，例如空白字元），用 `lib/notify/email.ts` 的 `taipeiTime()`。
 - **操作紀錄**：每個異動都要寫 audit_logs，`changes` 存「看得懂的內容」（名稱、時段等當下文字，或 `{ from, to }`），不存密碼、雜湊、照護備註原文。新增動作時同步在 `src/lib/audit-format.ts` 補中文名稱。只有店長能看（代理店長、業務都不行）。
 - **通知與寄信**：事件一律在預約交易內呼叫 `notify()` 寫入（含寄信用的 payload），**絕不在交易內寄信**；交易提交後由 `lib/notify/deliver.ts` 寄送。信件內容只在 `lib/notify/email.ts` 產生，照護備註永遠只寫「已修改」。
@@ -58,7 +59,7 @@ python3 tests/e2e/booking_flow.py http://localhost:3000 e2e-shots   # Playwright
 3. ~~**Email 通知**~~（2026-11-13 完成）：outbox＋`after()` 寄送、退避重試、設定錯誤停止並可手動重寄、`SKIP LOCKED`＋Resend 冪等鍵防重複。日報要用的 `notifications.payload`（預約摘要與差異）已一併寫入。
 4. ~~**每日 21:00 日報**~~（2026-11-13 完成）：`vercel.json` 排程 → `/api/cron/daily`（`CRON_SECRET`）→ `runDailyDigest()` 建立當天日報（未到 21:00 不建、沒事件不寄、一天一封）＋ `deliverAll()` 補寄重試。
 5. ~~**操作紀錄查詢頁**~~（2026-11-13 完成）：`/admin/audit`（僅店長、唯讀、篩選＋分頁）。班表、項目、設定、帳號的紀錄改為記下可讀內容；代理店長在預約詳情不再看得到操作紀錄（驗收 19）。
-6. **部署**到 Vercel，撰寫備份／還原說明。
+6. ~~**部署準備與備份／還原**~~（2026-11-13 完成）：`vercel.json` 東京區、安全標頭、`/api/health`、`db:backup`／`db:restore`（加密、只還原到空資料庫，本機實測逐列相同）、`docs/部署與維運.md`。**實際部署需使用者帳號**，照手冊「一、上線」執行。
 
 每完成一步：`npm test`、`npm run typecheck`、`npm run build` 全過，並跑一次 e2e 腳本，再進下一步。
 
