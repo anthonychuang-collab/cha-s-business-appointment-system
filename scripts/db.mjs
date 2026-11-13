@@ -6,6 +6,11 @@
  *   node scripts/db.mjs reset      清空本機資料庫後 migrate + seed-dev（只允許 localhost）
  *   node scripts/db.mjs create-admin [--login 帳號] [--name 顯示名稱]
  *                                  正式環境初始化：建立第一位店長（密碼由執行者輸入，不寫死；已有店長即拒絕）
+ *   node scripts/db.mjs setup      正式環境第一次設定：migrate ＋ 建立第一位店長（已有店長則只 migrate）
+ *
+ * migrate / create-admin / setup 沒有設定 DATABASE_URL 時，會在畫面上請你貼上連線字串（輸入時不顯示），
+ * 並檢查格式、貼錯會說明怎麼改。
+ *
  *   node scripts/db.mjs dev-setup  npm run dev 前自動執行：本機資料庫才 migrate + seed-dev，連到遠端時什麼都不做
  */
 import { readdir, readFile } from "node:fs/promises";
@@ -15,18 +20,61 @@ import readline from "node:readline";
 import { Writable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import postgres from "postgres";
+import { explainConnectError, normalizeDatabaseUrl } from "./db-url.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const MIGRATIONS = path.join(ROOT, "supabase", "migrations");
 
-const url = process.env.DATABASE_URL;
-if (!url) {
-  console.error("缺少 DATABASE_URL（可寫在 .env.local）。");
-  process.exit(1);
+let host = "";
+let isLocal = false;
+/** @type {import("postgres").Sql} */
+let sql;
+let prompter = null;
+const getPrompter = () => (prompter ??= createPrompter());
+
+/** 可以在畫面上詢問連線字串的指令（給第一次設定正式環境的人用） */
+const INTERACTIVE = new Set(["migrate", "create-admin", "setup"]);
+
+/** 取得連線字串（環境變數，或在畫面上詢問）、連線並確認可用 */
+async function connect(cmd) {
+  let parsed = null;
+  const fromEnv = process.env.DATABASE_URL;
+  if (fromEnv) {
+    parsed = normalizeDatabaseUrl(fromEnv);
+    if ("error" in parsed) {
+      console.error(`環境變數 DATABASE_URL 的內容不正確：${parsed.error}`);
+      if (!INTERACTIVE.has(cmd)) process.exit(1);
+      console.error("（以下改為直接輸入；也可以先執行 unset DATABASE_URL 清掉它。）\n");
+      parsed = null;
+    }
+  } else if (!INTERACTIVE.has(cmd)) {
+    console.error("缺少 DATABASE_URL（可寫在 .env.local）。");
+    process.exit(1);
+  }
+  for (let attempt = 1; !parsed; attempt++) {
+    if (attempt === 1) {
+      console.log("請貼上 Supabase「Session pooler」的連線字串（postgresql:// 開頭的一整行），然後按 Enter。");
+      console.log("為了安全，貼上時畫面不會顯示任何字，這是正常的。\n");
+    }
+    const r = normalizeDatabaseUrl(await getPrompter().ask("連線字串：", { hidden: true }));
+    if ("error" in r) {
+      console.error(`✗ ${r.error}\n`);
+      if (attempt >= 3) process.exit(1);
+      continue;
+    }
+    parsed = r;
+  }
+  host = parsed.host;
+  isLocal = ["localhost", "127.0.0.1", "::1"].includes(host);
+  sql = postgres(parsed.url, { prepare: false, max: 1, onnotice: () => {}, connect_timeout: 15 });
+  try {
+    await sql`select 1`;
+  } catch (e) {
+    console.error(`✗ ${explainConnectError(e)}`);
+    process.exit(1);
+  }
+  if (!isLocal) console.log(`✓ 已連線：${host}（使用者 ${parsed.user}）`);
 }
-const host = new URL(url).hostname;
-const isLocal = ["localhost", "127.0.0.1", "::1"].includes(host);
-const sql = postgres(url, { prepare: false, max: 1, onnotice: () => {} });
 
 async function migrate() {
   await sql`create table if not exists app_migrations (name text primary key, applied_at timestamptz not null default now())`;
@@ -143,7 +191,7 @@ async function createAdmin(argv) {
   }
 
   console.log(`建立第一位店長（資料庫：${host}）`);
-  const p = createPrompter();
+  const p = getPrompter();
   let loginName, displayName, password;
   try {
     loginName = (flags.login ?? (await p.ask("登入帳號（3–30 個英數字或 . _ -）："))).trim();
@@ -156,7 +204,7 @@ async function createAdmin(argv) {
     const again = await p.ask("再輸入一次密碼：", { hidden: true });
     if (again !== password) throw new Error("兩次輸入的密碼不一致。");
   } finally {
-    p.close();
+    // 提示器在程式結束時統一關閉
   }
 
   const created = await sql.begin(async (tx) => {
@@ -184,6 +232,21 @@ async function createAdmin(argv) {
   console.log(`已建立店長「${displayName}」（帳號 ${loginName}）。請登入後到「帳號與權限」建立其他帳號。`);
 }
 
+/** 正式環境第一次設定：建立資料表，還沒有店長就接著建立 */
+async function setup() {
+  await migrate();
+  const [{ n }] = await sql`select count(*)::int as n from user_accounts where role = 'admin'`;
+  if (n > 0) {
+    console.log("已有店長帳號，略過建立店長。");
+    return;
+  }
+  console.log("");
+  await createAdmin([]);
+  if (!process.exitCode) {
+    console.log("\n✓ 資料庫設定完成。下一步：設定 Resend 寄信、建立 Vercel 專案（docs/部署與維運.md「一、上線」第 3、4 步）。");
+  }
+}
+
 async function reset() {
   if (!isLocal || process.env.NODE_ENV === "production") {
     console.error(`拒絕清空非本機資料庫（${host}）。`);
@@ -197,10 +260,16 @@ async function reset() {
 
 const cmd = process.argv[2];
 try {
+  if (!["migrate", "seed-dev", "reset", "create-admin", "setup", "dev-setup"].includes(cmd)) {
+    console.error("用法：node scripts/db.mjs <migrate|seed-dev|reset|create-admin|setup|dev-setup>");
+    process.exit(1);
+  }
+  await connect(cmd);
   if (cmd === "migrate") await migrate();
   else if (cmd === "seed-dev") await seedDev();
   else if (cmd === "reset") await reset();
   else if (cmd === "create-admin") await createAdmin(process.argv.slice(3));
+  else if (cmd === "setup") await setup();
   else if (cmd === "dev-setup") {
     if (isLocal) { await migrate(); await seedDev(); }
     else console.log(`DATABASE_URL 指向遠端（${host}）：略過自動 migrate 與測試帳號。需要時請手動執行 npm run db:migrate。`);
@@ -213,5 +282,6 @@ try {
   console.error(e instanceof Error && !(e instanceof postgres.PostgresError) ? e.message : e);
   process.exitCode = 1;
 } finally {
-  await sql.end();
+  prompter?.close();
+  await sql?.end();
 }

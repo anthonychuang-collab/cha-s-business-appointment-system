@@ -11,8 +11,8 @@ Next.js 16（App Router）＋ TypeScript。
 npm install
 cp .env.example .env.local   # 填 DATABASE_URL（本機開發用 localhost 的資料庫）
 npm run dev                  # http://localhost:3000；本機資料庫會自動 migrate 並建立測試帳號
-npm test                     # 149 個規則、信件與紀錄格式單元測試（有設 TEST_DATABASE_URL 時另跑 48 個資料庫整合測試）
-npm run test:db              # 讀 .env.local 的 TEST_DATABASE_URL，跑全部 197 個測試
+npm test                     # 156 個單元測試（有設 TEST_DATABASE_URL 時另跑 48 個資料庫整合測試）
+npm run test:db              # 讀 .env.local 的 TEST_DATABASE_URL，跑全部 204 個測試
 npm run typecheck
 npm run build
 ```
@@ -22,7 +22,8 @@ npm run build
 | `npm run db:migrate` | 依序套用 `supabase/migrations/*.sql`（已套用的跳過，記錄在 `app_migrations`） |
 | `npm run db:seed-dev` | 建立開發用測試帳號（正式環境與遠端資料庫一律拒絕） |
 | `npm run db:reset` | 清空**本機**資料庫後重建（e2e 測試前用；非 localhost 拒絕執行） |
-| `npm run db:create-admin` | 正式環境初始化：建立第一位店長（見下方「建立 Supabase 專案」第 4 步） |
+| `npm run db:setup` | 正式環境第一次設定：在畫面上貼連線字串（檢查格式、不顯示）→ 建立資料表 → 建立第一位店長 |
+| `npm run db:create-admin` | 只建立第一位店長 |
 
 本機資料庫開發時會自動建立測試帳號（正式環境、Supabase 都不會建立）：
 
@@ -154,7 +155,7 @@ tests/e2e/          Playwright 完整操作測試（python3 tests/e2e/booking_fl
 
 ## 已驗證
 
-- `npm test`：149 個規則、信件與紀錄格式測試全部通過；接上測試資料庫時 48 個整合測試也全部通過（共 197）。
+- `npm test`：156 個單元測試全部通過；接上測試資料庫時 48 個整合測試也全部通過（共 204）。
 - 備份還原：本機實測備份 → 還原到新資料庫，16 張資料表逐列比對完全相同；錯誤密碼、損壞檔案、非空資料庫都會拒絕且不留下資料；模擬 Supabase 預設權限，還原後公開角色無法讀取。
 - `tests/e2e/booking_flow.py`：接 PostgreSQL 後以桌面 1280px 與手機 390px 實際操作，20 項檢查全部通過，包括：
   - 錯誤帳密的提示，業務直接輸入 `/admin` 會被導回首頁。

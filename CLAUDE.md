@@ -21,12 +21,13 @@
 npm install
 cp .env.example .env.local   # 填 DATABASE_URL、TEST_DATABASE_URL（本機 PostgreSQL）
 npm run dev        # 開發伺服器；本機資料庫會自動 migrate 並建立 dev-admin / dev-sales-a / dev-sales-b / dev-deputy
-npm test           # 149 個規則、信件與紀錄格式單元測試（設了 TEST_DATABASE_URL 時另跑資料庫整合測試）
-npm run test:db    # 讀 .env.local，跑全部 197 個（含並行整合測試；會清空 TEST_DATABASE_URL）
+npm test           # 156 個規則、信件、紀錄格式與連線字串單元測試（設了 TEST_DATABASE_URL 時另跑資料庫整合測試）
+npm run test:db    # 讀 .env.local，跑全部 204 個（含並行整合測試；會清空 TEST_DATABASE_URL）
 npm run typecheck
 npm run build
 npm run db:reset   # 清空本機資料庫並重建（e2e 前先跑）
-npm run db:create-admin   # 正式環境建立第一位店長（互動輸入密碼；已有店長即拒絕）
+npm run db:setup   # 正式環境第一次設定：畫面上貼連線字串（會檢查格式）→ migrate → 建立第一位店長
+npm run db:create-admin   # 只建立第一位店長（互動輸入密碼；已有店長即拒絕）
 python3 tests/e2e/booking_flow.py http://localhost:3000 e2e-shots   # Playwright 完整操作測試（需先 db:reset 再啟動 dev）
 ```
 

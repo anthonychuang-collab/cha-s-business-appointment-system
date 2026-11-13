@@ -10,7 +10,7 @@ export default defineConfig({
     },
   },
   test: {
-    include: ["src/**/*.test.ts", "tests/integration/**/*.test.ts"],
+    include: ["src/**/*.test.ts", "tests/unit/**/*.test.ts", "tests/integration/**/*.test.ts"],
     // 資料庫整合測試共用同一個測試資料庫，不可平行跑檔案
     fileParallelism: false,
     testTimeout: 30_000,
