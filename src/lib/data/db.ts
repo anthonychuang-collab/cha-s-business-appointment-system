@@ -16,6 +16,8 @@ function connect(): Sql {
   const url = process.env.DATABASE_URL;
   if (!url) throw new Error("缺少 DATABASE_URL：請設定 Supabase 連線字串（本機開發見 README）。");
   return postgres(url, {
+    // 連到 Supabase 一律加密（連線字串忘了加 ?sslmode=require 也一樣）
+    ...(isSupabase(url) && !/[?&]sslmode=/.test(url) ? { ssl: "require" as const } : {}),
     prepare: false,
     max: Number(process.env.DATABASE_POOL_MAX ?? 5),
     idle_timeout: 20,
@@ -24,6 +26,14 @@ function connect(): Sql {
       date: { to: 1082, from: [1082], serialize: (x: string) => x, parse: (x: string) => x },
     },
   });
+}
+
+function isSupabase(url: string): boolean {
+  try {
+    return /\.supabase\.(com|co)$/i.test(new URL(url).hostname);
+  } catch {
+    return false;
+  }
 }
 
 const g = globalThis as unknown as { __clinicSql?: Sql };
