@@ -2,8 +2,11 @@ import "server-only";
 /**
  * PostgreSQL（Supabase）連線。只在伺服器端使用。
  *
- * - Supabase 請用 Transaction pooler（port 6543）連線字串：該模式不支援 prepared statement，
- *   所以 prepare: false；也不支援 session 層級鎖，鎖一律用 pg_advisory_xact_lock（交易結束自動釋放）。
+ * - Supabase 請用 **Session pooler（port 5432）** 連線字串，不要用 Transaction pooler（6543）：
+ *   本程式會在同一條連線上連續送出多個查詢（例如同時讀取醫師、班表、設定），
+ *   正式環境實測 Transaction pooler 會把回應配錯查詢，接著連線卡住直到逾時；Session pooler 則不會。
+ *   使用 6543 時直接拒絕連線，避免讀到錯的資料。
+ * - 鎖一律用 pg_advisory_xact_lock（交易結束自動釋放），兩種連線池都適用。
  * - date 欄位維持 "YYYY-MM-DD" 字串，不轉成 JS Date，避免主機時區（Vercel 為 UTC）造成日期偏移。
  */
 import postgres from "postgres";
@@ -19,11 +22,15 @@ function connect(): Sql {
   if (!isValidDatabaseUrl(url)) {
     throw new Error("DATABASE_URL 格式不正確：需要 postgresql:// 開頭的一整行連線字串（為保護密碼，這裡不顯示內容）。");
   }
+  if (isSupabaseTransactionPooler(url)) {
+    throw new Error("DATABASE_URL 使用了 Supabase Transaction pooler（port 6543），會讓查詢結果錯亂。請改用 Session pooler（port 5432）的連線字串。");
+  }
   return postgres(url, {
     // 連到 Supabase 一律加密（連線字串忘了加 ?sslmode=require 也一樣）
     ...(isSupabase(url) && !/[?&]sslmode=/.test(url) ? { ssl: "require" as const } : {}),
     prepare: false,
-    max: Number(process.env.DATABASE_POOL_MAX ?? 5),
+    // Session pooler 每條連線都占用一個資料庫連線，保持少量即可
+    max: Number(process.env.DATABASE_POOL_MAX ?? 3),
     idle_timeout: 20,
     onnotice: () => {},
     types: {
@@ -39,6 +46,11 @@ function isValidDatabaseUrl(url: string): boolean {
   } catch {
     return false;
   }
+}
+
+function isSupabaseTransactionPooler(url: string): boolean {
+  const u = new URL(url);
+  return /\.pooler\.supabase\.com$/i.test(u.hostname) && u.port === "6543";
 }
 
 function isSupabase(url: string): boolean {
