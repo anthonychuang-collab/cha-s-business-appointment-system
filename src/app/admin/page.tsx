@@ -7,6 +7,7 @@ import { checkHour, openingFor } from "@/lib/domain/schedule";
 import { addDays } from "@/lib/domain/time";
 import { CONFLICT_LABEL, displayDate, STATUS_BADGE, STATUS_LABEL } from "@/lib/format";
 import { AdminHeader, Footer } from "@/components/Chrome";
+import { WeekView, weekStart, weekStats } from "./WeekView";
 
 export default async function Overview({ searchParams }: PageProps<"/admin">) {
   const me = await requireUser(["admin", "deputy"]);
@@ -15,23 +16,28 @@ export default async function Overview({ searchParams }: PageProps<"/admin">) {
   const fSales = String(sp.sales ?? "");
   const fDoctor = String(sp.doctor ?? "");
   const fStatus = String(sp.status ?? "");
+  const view = sp.view === "week" ? "week" : "day";
 
   const db = await pageRef();
   const { doctorName, itemName, salespersonName } = namesOf(db);
   const schedule = scheduleData(db);
   const opening = openingFor(schedule, date);
-  const dayAll = await listAppointments(sql(), { date });
-  const day = dayAll.filter(
-    (a) =>
-      (!fSales || a.salespersonId === fSales) &&
-      (!fDoctor || (fDoctor === "yes" ? a.requiresDoctor : !a.requiresDoctor)) &&
-      (fStatus ? a.status === fStatus : a.status !== "cancelled"),
-  );
+  const matches = (a: { salespersonId: string; requiresDoctor: boolean; status: string }) =>
+    (!fSales || a.salespersonId === fSales) &&
+    (!fDoctor || (fDoctor === "yes" ? a.requiresDoctor : !a.requiresDoctor)) &&
+    (fStatus ? a.status === fStatus : a.status !== "cancelled");
+  const monday = weekStart(date);
+  const weekAll = view === "week" ? await listAppointments(sql(), { dateFrom: monday, dateTo: addDays(monday, 6) }) : [];
+  const dayAll = view === "day" ? await listAppointments(sql(), { date }) : [];
+  const day = dayAll.filter(matches);
   const hours = opening ? Array.from({ length: (Number(opening.end.slice(0, 2)) - Number(opening.start.slice(0, 2))) }, (_, i) => Number(opening.start.slice(0, 2)) + i) : [];
   const today = todayTaipei();
   const conflicts = await listAppointments(sql(), { status: "active", conflictStatus: "conflict", dateFrom: today });
   const active = dayAll.filter((a) => a.status !== "cancelled");
-  const qs = (d: string) => `/admin?date=${d}${fSales ? `&sales=${fSales}` : ""}${fDoctor ? `&doctor=${fDoctor}` : ""}${fStatus ? `&status=${fStatus}` : ""}`;
+  const qs = (d: string, v: "day" | "week" = view) =>
+    `/admin?date=${d}${v === "week" ? "&view=week" : ""}${fSales ? `&sales=${fSales}` : ""}${fDoctor ? `&doctor=${fDoctor}` : ""}${fStatus ? `&status=${fStatus}` : ""}`;
+  const step = view === "week" ? 7 : 1;
+  const stats = view === "week" ? weekStats(date, weekAll, schedule) : null;
 
   return (
     <>
@@ -39,14 +45,18 @@ export default async function Overview({ searchParams }: PageProps<"/admin">) {
       <main className="content">
         <div className="headrow">
           <div>
-            <div className="eyebrow">Daily overview</div>
-            <h1>{displayDate(date)}</h1>
-            <p className="muted" style={{ margin: 0 }}>{opening ? `營業 ${opening.start}–${opening.end}` : "本日休診"}</p>
+            <div className="eyebrow">{view === "week" ? "Weekly overview" : "Daily overview"}</div>
+            <h1>{view === "week" ? `${displayDate(monday)} – ${addDays(monday, 6).slice(5).replace("-", " / ")}` : displayDate(date)}</h1>
+            <p className="muted" style={{ margin: 0 }}>{view === "week" ? "週一至週日" : opening ? `營業 ${opening.start}–${opening.end}` : "本日休診"}</p>
           </div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-            <Link className="btn small secondary" href={qs(addDays(date, -1))} aria-label="前一天">‹ 前一天</Link>
-            <Link className="btn small secondary" href={qs(today)}>今天</Link>
-            <Link className="btn small secondary" href={qs(addDays(date, 1))} aria-label="後一天">後一天 ›</Link>
+            <nav className="seg" aria-label="檢視方式">
+              <Link href={qs(date, "day")} aria-current={view === "day" ? "page" : undefined}>日</Link>
+              <Link href={qs(date, "week")} aria-current={view === "week" ? "page" : undefined}>週</Link>
+            </nav>
+            <Link className="btn small secondary" href={qs(addDays(date, -step))} aria-label={view === "week" ? "上一週" : "前一天"}>{view === "week" ? "‹ 上一週" : "‹ 前一天"}</Link>
+            <Link className="btn small secondary" href={qs(today)}>{view === "week" ? "本週" : "今天"}</Link>
+            <Link className="btn small secondary" href={qs(addDays(date, step))} aria-label={view === "week" ? "下一週" : "後一天"}>{view === "week" ? "下一週 ›" : "後一天 ›"}</Link>
             <Link className="btn small" href={`/admin/new?date=${date}`}>＋ 新增預約</Link>
           </div>
         </div>
@@ -58,14 +68,24 @@ export default async function Overview({ searchParams }: PageProps<"/admin">) {
           </div>
         )}
 
+        {stats ? (
+          <div className="metrics">
+            <div className="metric"><span>本週預約<small>APPOINTMENTS</small></span><b>{String(stats.total).padStart(2, "0")}</b></div>
+            <div className="metric"><span>需醫師<small>WITH DOCTOR</small></span><b>{String(stats.withDoctor).padStart(2, "0")}</b></div>
+            <div className="metric"><span>超額加開<small>OVERBOOKED</small></span><b>{String(stats.overbooked).padStart(2, "0")}</b></div>
+            <div className="metric"><span>空檔<small>OPEN SLOTS</small></span><b>{String(stats.open).padStart(2, "0")}</b></div>
+          </div>
+        ) : (
         <div className="metrics">
           <div className="metric"><span>本日預約<small>APPOINTMENTS</small></span><b>{String(active.length).padStart(2, "0")}</b></div>
           <div className="metric"><span>需醫師<small>WITH DOCTOR</small></span><b>{String(active.filter((a) => a.requiresDoctor).length).padStart(2, "0")}</b></div>
           <div className="metric"><span>超額加開<small>OVERBOOKED</small></span><b>{String(active.filter((a) => a.isOverbooked).length).padStart(2, "0")}</b></div>
           <div className="metric"><span>空檔<small>OPEN SLOTS</small></span><b>{String(hours.filter((h) => !active.some((a) => a.start === `${String(h).padStart(2, "0")}:00`) && !checkHour(schedule, date, h * 60).clinicBlocked).length).padStart(2, "0")}</b></div>
         </div>
+        )}
 
         <form className="toolbar" aria-label="篩選">
+          {view === "week" && <input type="hidden" name="view" value="week" />}
           <label className="sr-only" htmlFor="f-sales">負責業務</label>
           <select id="f-sales" name="sales" defaultValue={fSales}>
             <option value="">全部業務</option>
@@ -85,11 +105,16 @@ export default async function Overview({ searchParams }: PageProps<"/admin">) {
             <option value="no_show">未到</option>
             <option value="cancelled">已取消</option>
           </select>
-          <input type="date" name="date" defaultValue={date} aria-label="切換日期" />
+          <input type="date" name="date" defaultValue={date} aria-label={view === "week" ? "切換到包含此日期的那一週" : "切換日期"} />
           <button className="btn small secondary">套用</button>
         </form>
 
-        {!opening ? (
+        {view === "week" ? (
+          <WeekView
+            date={date} today={today} all={weekAll} visible={weekAll.filter(matches)} schedule={schedule}
+            names={{ itemName, doctorName, salespersonName }} dayHref={(d) => qs(d, "day")}
+          />
+        ) : !opening ? (
           <div className="hourcell closed"><p>本日休診，不開放預約。</p></div>
         ) : (
           <div className="daygrid">
