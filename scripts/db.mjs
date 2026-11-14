@@ -7,6 +7,9 @@
  *   node scripts/db.mjs create-admin [--login 帳號] [--name 顯示名稱]
  *                                  正式環境初始化：建立第一位店長（密碼由執行者輸入，不寫死；已有店長即拒絕）
  *   node scripts/db.mjs setup      正式環境第一次設定：migrate ＋ 建立第一位店長（已有店長則只 migrate）
+ *   node scripts/db.mjs reset-admin-password
+ *                                  店長忘記密碼且沒有其他店長能重設時使用：列出店長帳號、輸入新密碼（不顯示），
+ *                                  並登出該帳號所有裝置、解除登入鎖定、寫入操作紀錄
  *
  * migrate / create-admin / setup 沒有設定 DATABASE_URL 時，會在畫面上請你貼上連線字串（輸入時不顯示），
  * 並檢查格式、貼錯會說明怎麼改。
@@ -33,7 +36,7 @@ let prompter = null;
 const getPrompter = () => (prompter ??= createPrompter());
 
 /** 可以在畫面上詢問連線字串的指令（給第一次設定正式環境的人用） */
-const INTERACTIVE = new Set(["migrate", "create-admin", "setup"]);
+const INTERACTIVE = new Set(["migrate", "create-admin", "setup", "reset-admin-password"]);
 
 /** 取得連線字串（環境變數，或在畫面上詢問）、連線並確認可用 */
 async function connect(cmd) {
@@ -232,6 +235,39 @@ async function createAdmin(argv) {
   console.log(`已建立店長「${displayName}」（帳號 ${loginName}）。請登入後到「帳號與權限」建立其他帳號。`);
 }
 
+/** 店長忘記密碼的救援：能連上正式資料庫的人才能執行，等同於管理者權限 */
+async function resetAdminPassword() {
+  const admins = await sql`select id, login_name, display_name, active from user_accounts where role = 'admin' order by created_at`;
+  if (admins.length === 0) {
+    console.error("目前沒有店長帳號，請改用 npm run db:setup 建立第一位店長。");
+    process.exitCode = 1;
+    return;
+  }
+  console.log("\n店長帳號：");
+  for (const a of admins) console.log(`  ${a.login_name}（${a.display_name}）${a.active ? "" : "　※ 已停用"}`);
+  console.log("");
+  const p = getPrompter();
+  const loginName = (await p.ask("要重設哪一個登入帳號：")).trim();
+  const target = admins.find((a) => a.login_name.toLowerCase() === loginName.toLowerCase());
+  if (!target) throw new Error("找不到這個店長帳號（只能重設上面列出的店長）。");
+  const password = await p.ask(`新密碼（至少 ${MIN_PASSWORD} 個字元，輸入時不顯示）：`, { hidden: true });
+  if (password.length < MIN_PASSWORD) throw new Error(`密碼至少 ${MIN_PASSWORD} 個字元。`);
+  if (password.toLowerCase().includes(target.login_name.toLowerCase()) || password === "dev-only-1234") throw new Error("密碼不可包含帳號，也不可使用開發用預設密碼。");
+  const again = await p.ask("再輸入一次新密碼：", { hidden: true });
+  if (again !== password) throw new Error("兩次輸入的密碼不一致。");
+
+  await sql.begin(async (tx) => {
+    await tx`update user_accounts set password_hash = ${hashPassword(password)}, active = true, updated_at = now() where id = ${target.id}`;
+    await tx`delete from sessions where user_id = ${target.id}`; // 其他裝置上的登入一律失效
+    await tx`delete from login_failures where login_key = ${target.login_name.toLowerCase()}`; // 解除「失敗 5 次鎖 10 分鐘」
+    // 不記錄密碼或雜湊；actor 為空代表由指令執行
+    await tx`
+      insert into audit_logs (entity_type, entity_id, actor_user_id, action, changes)
+      values ('account', ${target.id}, null, 'reset-password', ${tx.json({ name: target.display_name, via: "command" })})`;
+  });
+  console.log(`\n✓ 已重設「${target.display_name}」（帳號 ${target.login_name}）的密碼${target.active ? "" : "，並重新啟用帳號"}。請用新密碼登入。`);
+}
+
 /** 正式環境第一次設定：建立資料表，還沒有店長就接著建立 */
 async function setup() {
   await migrate();
@@ -260,8 +296,8 @@ async function reset() {
 
 const cmd = process.argv[2];
 try {
-  if (!["migrate", "seed-dev", "reset", "create-admin", "setup", "dev-setup"].includes(cmd)) {
-    console.error("用法：node scripts/db.mjs <migrate|seed-dev|reset|create-admin|setup|dev-setup>");
+  if (!["migrate", "seed-dev", "reset", "create-admin", "setup", "reset-admin-password", "dev-setup"].includes(cmd)) {
+    console.error("用法：node scripts/db.mjs <migrate|seed-dev|reset|create-admin|setup|reset-admin-password|dev-setup>");
     process.exit(1);
   }
   await connect(cmd);
@@ -270,6 +306,7 @@ try {
   else if (cmd === "reset") await reset();
   else if (cmd === "create-admin") await createAdmin(process.argv.slice(3));
   else if (cmd === "setup") await setup();
+  else if (cmd === "reset-admin-password") await resetAdminPassword();
   else if (cmd === "dev-setup") {
     if (isLocal) { await migrate(); await seedDev(); }
     else console.log(`DATABASE_URL 指向遠端（${host}）：略過自動 migrate 與測試帳號。需要時請手動執行 npm run db:migrate。`);

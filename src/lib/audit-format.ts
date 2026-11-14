@@ -75,6 +75,7 @@ const KEYS: Record<string, { label: string; show?: (v: unknown) => string }> = {
   role: { label: "角色", show: (v) => ROLE[String(v)] ?? String(v) },
   salesperson: { label: "業務" },
   count: { label: "筆數", show: (v) => `${v} 筆` },
+  via: { label: "方式", show: (v) => (v === "command" ? "以指令重設（忘記密碼救援）" : String(v)) },
 };
 
 function keyInfo(key: string): { label: string; show: (v: unknown) => string } {

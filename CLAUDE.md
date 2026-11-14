@@ -28,6 +28,7 @@ npm run build
 npm run db:reset   # 清空本機資料庫並重建（e2e 前先跑）
 npm run db:setup   # 正式環境第一次設定：畫面上貼連線字串（會檢查格式）→ migrate → 建立第一位店長
 npm run db:create-admin   # 只建立第一位店長（互動輸入密碼；已有店長即拒絕）
+npm run db:reset-admin-password   # 店長忘記密碼的救援（列出店長、輸入新密碼、登出所有裝置、寫入紀錄）
 python3 tests/e2e/booking_flow.py http://localhost:3000 e2e-shots   # Playwright 完整操作測試（需先 db:reset 再啟動 dev）
 ```
 

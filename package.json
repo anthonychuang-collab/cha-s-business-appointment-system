@@ -14,6 +14,7 @@
     "db:seed-dev": "node --env-file-if-exists=.env.local scripts/db.mjs seed-dev",
     "db:reset": "node --env-file-if-exists=.env.local scripts/db.mjs reset",
     "db:create-admin": "node --env-file-if-exists=.env.local scripts/db.mjs create-admin",
+    "db:reset-admin-password": "node --env-file-if-exists=.env.local scripts/db.mjs reset-admin-password",
     "db:setup": "node --env-file-if-exists=.env.local scripts/db.mjs setup",
     "db:backup": "bash scripts/backup.sh",
     "db:restore": "bash scripts/restore.sh"
