@@ -99,7 +99,7 @@ tests/e2e/          Playwright 完整操作測試（python3 tests/e2e/booking_fl
 ### 建立 Supabase 專案
 
 1. 建立專案，區域選 **Northeast Asia (Tokyo)**；方案建議 Pro（每日自動備份、不會閒置暫停）。
-2. Project Settings → Database → Connection string，複製 **Transaction pooler**（port 6543）的連線字串，結尾加上 `?sslmode=require`，填進 `.env.local`（或 Vercel 環境變數）的 `DATABASE_URL`。
+2. Project Settings → Database → Connection string，複製 **Session pooler**（port 5432）的連線字串，填進 Vercel 環境變數的 `DATABASE_URL`。**不要用 Transaction pooler（6543）**：同一條連線上連續送出的查詢會被配錯回應並卡住（正式環境實測），程式會拒絕 6543。
 3. 執行 `npm run db:migrate` 建立資料表與初始設定（項目、醫師班表、營業時間、通知方式）。
 4. 建立第一位店長（一次性）：
 
@@ -117,7 +117,7 @@ tests/e2e/          Playwright 完整操作測試（python3 tests/e2e/booking_fl
 
 - `booking.ts` 每個寫入函式都是一個交易；取鎖順序固定（班表鎖 → 冪等鍵 → 預約列 `FOR UPDATE` → 時段鎖 `pg_advisory_xact_lock(hashtext(date || start))` → 當日編號鎖），避免死結。
 - 班表、營業時間、封鎖異動與業務離職轉出取**班表獨占鎖**，其餘預約寫入取共用鎖：重算衝突時不會有預約同時寫入而漏算。
-- 鎖全部是交易層級，適用 Supabase transaction pooler；連線設定 `prepare: false`。
+- 鎖全部是交易層級；連線用 Supabase Session pooler（5432），設定 `prepare: false`。
 - 修改一律比對版本號，兩人同時改同一筆時後到者收到「此預約已被更新」。
 - `tests/integration/booking.db.test.ts` 以真實資料庫驗證上述行為（10 人同時搶同一時段只成功 1 筆等）。
 

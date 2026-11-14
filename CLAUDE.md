@@ -28,6 +28,7 @@ npm run build
 npm run db:reset   # 清空本機資料庫並重建（e2e 前先跑）
 npm run db:setup   # 正式環境第一次設定：畫面上貼連線字串（會檢查格式）→ migrate → 建立第一位店長
 npm run db:create-admin   # 只建立第一位店長（互動輸入密碼；已有店長即拒絕）
+npm run db:reset-admin-password   # 店長忘記密碼的救援（列出店長、輸入新密碼、登出所有裝置、寫入紀錄）
 python3 tests/e2e/booking_flow.py http://localhost:3000 e2e-shots   # Playwright 完整操作測試（需先 db:reset 再啟動 dev）
 ```
 
@@ -38,7 +39,7 @@ python3 tests/e2e/booking_flow.py http://localhost:3000 e2e-shots   # Playwright
 - **規則只寫在 `src/lib/domain/`**：純函式、不碰資料庫、每個檔案都有測試。改規則一律測試先行：先在 `*.test.ts` 寫會失敗的測試，再改程式，跑 `npm test` 全綠。
 - **所有預約讀寫只經過 `src/lib/booking.ts`**；設定與帳號經過 `src/lib/admin.ts`。頁面與 Server Action 不直接改資料。SQL 只寫在 `src/lib/data/repo.ts`（不放規則）；頁面讀設定類資料用 `pageRef()`（每個請求只查一次）。
 - **權限在伺服器端檢查**：每個 Server Action 開頭都要 `requireUser([...角色])`。業務查不到別人的預約一律回 404。
-- **並行安全**：寫入一律在 `withTx` 交易內，取鎖順序固定：班表鎖（預約寫入共用、班表異動獨占）→ 冪等鍵 → 預約列 `FOR UPDATE` → 時段鎖 `pg_advisory_xact_lock(hashtext(date || start))` → 當日編號鎖。Supabase 連線池為 transaction 模式，只能用交易層級鎖、`prepare: false`。改動並行邏輯時先在 `tests/integration/` 加測試。
+- **並行安全**：寫入一律在 `withTx` 交易內，取鎖順序固定：班表鎖（預約寫入共用、班表異動獨占）→ 冪等鍵 → 預約列 `FOR UPDATE` → 時段鎖 `pg_advisory_xact_lock(hashtext(date || start))` → 當日編號鎖。正式環境用 Supabase **Session pooler（5432）**；Transaction pooler（6543）會把同一連線上連續查詢的回應配錯並卡住（2026-11-14 正式環境實測），`db.ts` 會拒絕 6543。鎖仍一律用交易層級、`prepare: false`。改動並行邏輯時先在 `tests/integration/` 加測試。
 - **資料表變更**：只新增 `supabase/migrations/` 的新檔（檔名時間戳遞增），不要改已套用的舊檔；新資料表要開 RLS 並 revoke anon／authenticated；同時更新 `src/lib/data/schema-version.ts`（有測試檢查）。migration 必須相容於舊版程式（先 migrate 再部署）。
 - **時間一律台北時間**：使用 `src/lib/domain/time.ts`，不可依賴主機時區（Vercel 為 UTC）；伺服器端也不要用 `toLocaleString` 產生要比對或寄出的文字（各主機 ICU 輸出不同，例如空白字元），用 `lib/notify/email.ts` 的 `taipeiTime()`。
 - **操作紀錄**：每個異動都要寫 audit_logs，`changes` 存「看得懂的內容」（名稱、時段等當下文字，或 `{ from, to }`），不存密碼、雜湊、照護備註原文。新增動作時同步在 `src/lib/audit-format.ts` 補中文名稱。全院操作紀錄只有店長能看（代理店長、業務都不行）；業務在自己名下預約的詳情頁只看得到該筆的時間軸（動作、誰、何時，不含內容與原因），這是刻意保留的設計（規格 12），不要移除。

@@ -9,9 +9,9 @@ import { resetTestDatabase, TEST_URL as url } from "./helpers";
 const SCRIPT = path.resolve(__dirname, "../../scripts/db.mjs");
 
 /** 以管線送入各行輸入（非終端機模式），回傳結束碼與輸出 */
-function run(args: string[], stdin: string, env: Record<string, string> = {}): Promise<{ code: number; out: string }> {
+function run(args: string[], stdin: string, env: Record<string, string> = {}, cmd = "create-admin"): Promise<{ code: number; out: string }> {
   return new Promise((resolve) => {
-    const child = spawn(process.execPath, [SCRIPT, "create-admin", ...args], {
+    const child = spawn(process.execPath, [SCRIPT, cmd, ...args], {
       env: { ...process.env, DATABASE_URL: url!, ...env },
     });
     let out = "";
@@ -76,6 +76,29 @@ describe.skipIf(!url)("create-admin 初始化指令（TEST_DATABASE_URL）", () 
     expect(r.code).toBe(1);
     expect(r.out).toContain("已有店長帳號");
     expect(await admins()).toHaveLength(1);
+  });
+
+  it("忘記密碼救援：重設店長密碼、登出所有裝置、解除鎖定、寫入紀錄；只能重設店長", async () => {
+    const [admin] = await raw`select id, login_name, password_hash from user_accounts where role = 'admin'`;
+    await raw`insert into sessions (token_hash, user_id, expires_at) values ('h-reset', ${admin.id}, now() + interval '1 hour')`;
+    await raw`insert into login_failures (login_key, count, locked_until) values (${admin.login_name}, 5, now() + interval '10 minutes')`;
+    const NEW = "Another-Strong-77";
+
+    const wrong = await run([], "not-an-admin\n", {}, "reset-admin-password");
+    expect(wrong.code).toBe(1);
+    expect(wrong.out).toContain("找不到這個店長帳號");
+
+    const r = await run([], `${String(admin.login_name).toUpperCase()}\n${NEW}\n${NEW}\n`, {}, "reset-admin-password");
+    expect(r.code, r.out).toBe(0);
+    expect(r.out).not.toContain(NEW);
+    const [after] = await raw`select password_hash from user_accounts where id = ${admin.id}`;
+    expect(verifyPassword(NEW, after.password_hash)).toBe(true);
+    expect(verifyPassword(PW, after.password_hash)).toBe(false);
+    expect((await raw`select count(*)::int as n from sessions where user_id = ${admin.id}`)[0].n).toBe(0);
+    expect((await raw`select count(*)::int as n from login_failures`)[0].n).toBe(0);
+    const [log] = await raw`select actor_user_id, changes from audit_logs where action = 'reset-password'`;
+    expect(log.actor_user_id).toBeNull();
+    expect(JSON.stringify(log.changes)).not.toContain(NEW);
   });
 
   it("兩人同時對空資料庫執行：只會建立一位", async () => {

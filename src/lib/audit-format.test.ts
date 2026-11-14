@@ -48,6 +48,11 @@ describe("auditLines", () => {
       .toEqual(["內容：廖醫師 週二 13:00–19:00 → 廖醫師 週二 14:00–19:00"]);
   });
 
+  it("以指令重設密碼", () => {
+    expect(auditLines({ entityType: "account", action: "reset-password", changes: { name: "陳店長", via: "command" } }, names))
+      .toEqual(["名稱：陳店長", "方式：以指令重設（忘記密碼救援）"]);
+  });
+
   it("沒有內容時回傳空陣列", () => {
     expect(auditLines({ entityType: "account", action: "reset-password", changes: {} }, names)).toEqual([]);
   });
