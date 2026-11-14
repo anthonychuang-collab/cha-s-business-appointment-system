@@ -32,7 +32,7 @@ describe.skipIf(!url)("資料庫整合（TEST_DATABASE_URL）", () => {
   }
 
   const input = (over: Partial<import("@/lib/booking").BookingInput> = {}) => ({
-    customerName: "整合測試客戶", phone: "0912345678", itemId, partySize: 1, requiresDoctor: false, doctorId: null,
+    customerName: "整合測試客戶", phone: "0912345678", itemIds: [itemId], partySize: 1, requiresDoctor: false, doctorId: null,
     date: bookableDate(), start: "11:00", preferredDoctorNote: "", careNote: "", ...over,
   });
 
@@ -100,7 +100,7 @@ describe.skipIf(!url)("資料庫整合（TEST_DATABASE_URL）", () => {
     if (!r.ok) throw new Error(r.message);
     const results = await Promise.all([
       booking.updateSalesAppointment(salesA, spA, r.id, 1, { customerName: "改名一" }),
-      booking.adminUpdateBasics(boss, r.id, 1, { customerName: "改名二", phone: "0912345678", partySize: 2, itemId, careNote: "", preferredDoctorNote: "" }),
+      booking.adminUpdateBasics(boss, r.id, 1, { customerName: "改名二", phone: "0912345678", partySize: 2, itemIds: [itemId], careNote: "", preferredDoctorNote: "" }),
       booking.updateSalesAppointment(salesA, spA, r.id, 1, { partySize: 3 }),
     ]);
     expect(results.filter((x) => x.ok)).toHaveLength(1);
@@ -181,6 +181,77 @@ describe.skipIf(!url)("資料庫整合（TEST_DATABASE_URL）", () => {
     const created = results.slice(0, 4).filter((r) => r.ok).length;
     const [n] = await raw`select count(*)::int as n from appointments where conflict_status = 'conflict'`;
     expect(n.n).toBe(created);
+  });
+
+  it("預約項目可複選：依選擇順序存放、相容欄位同步；業務改項目受 4 小時限制、重複與停用項目被擋", async () => {
+    const items = (await raw`select id from appointment_items order by sort_order`).map((r) => String(r.id));
+    const r = await booking.createSalesAppointment(salesA, spA, input({ itemIds: [items[2], items[0], items[2]] }), "multi-1", false);
+    if (!r.ok) throw new Error(r.message);
+    const [row] = await raw`select item_id, item_ids from appointments where id = ${r.id}`;
+    expect(row.item_ids).toEqual([items[2], items[0]]); // 去除重複、保留順序
+    expect(row.item_id).toBe(items[2]); // 舊欄位為第一個
+
+    expect(await booking.createSalesAppointment(salesA, spA, input({ start: "15:00", itemIds: [] }), "multi-2", false)).toMatchObject({ ok: false, field: "itemIds" });
+    expect(await booking.createSalesAppointment(salesA, spA, input({ start: "15:00", itemIds: items.slice(0, 6) }), "multi-3", false)).toMatchObject({ ok: false, field: "itemIds" });
+
+    // 業務改成三個項目
+    expect(await booking.updateSalesAppointment(salesA, spA, r.id, 1, { itemIds: [items[0], items[1], items[3]] })).toEqual({ ok: true });
+    expect((await raw`select item_ids from appointments where id = ${r.id}`)[0].item_ids).toEqual([items[0], items[1], items[3]]);
+
+    // 項目停用後：已在預約上的可以保留，不能新加
+    await raw`update appointment_items set active = false where id = ${items[3]}`;
+    expect(await booking.adminUpdateBasics(boss, r.id, 2, { customerName: "整合測試客戶", phone: "0912345678", partySize: 1, itemIds: [items[0], items[3]], careNote: "", preferredDoctorNote: "" })).toEqual({ ok: true });
+    expect(await booking.updateSalesAppointment(salesA, spA, r.id, 3, { itemIds: [items[0], items[4]] })).toEqual({ ok: true });
+    const other = await booking.createSalesAppointment(salesB, spB, input({ start: "16:00", phone: "0977000111", itemIds: [items[3]] }), "multi-4", false);
+    expect(other).toMatchObject({ ok: false, field: "itemIds" });
+    await raw`update appointment_items set active = true where id = ${items[3]}`;
+
+    // 用過的項目不能刪除（只檢查第一個以外的也算用過）
+    expect((await repo.itemsInUse(dbm.sql())).has(items[4])).toBe(true);
+
+    // 4 小時內不能改項目；順序不同不算變更
+    const soon = new Date(Date.now() + 8 * 3_600_000 + 2 * 3_600_000);
+    const soonDate = soon.toISOString().slice(0, 10);
+    const soonHour = `${String(soon.getUTCHours()).padStart(2, "0")}:00`;
+    const [s] = await raw`
+      insert into appointments (code, customer_name, phone, phone_normalized, appointment_date, start_time, end_time, item_id, item_ids, party_size,
+        requires_doctor, salesperson_id, status, created_by, updated_by)
+      values ('IT-SOON', '即將到來', '0911222333', '0911222333', ${soonDate}, ${soonHour}, (${soonHour}::time + interval '1 hour'), ${items[0]}, ${[items[0], items[1]]}::uuid[], 1,
+        false, ${spA}, 'active', ${salesA.id}, ${salesA.id})
+      returning id`;
+    expect(await booking.updateSalesAppointment(salesA, spA, String(s.id), 1, { itemIds: [items[0], items[2]] })).toMatchObject({ ok: false, code: "WITHIN_4H" });
+    expect(await booking.updateSalesAppointment(salesA, spA, String(s.id), 1, { itemIds: [items[1], items[0]], partySize: 2 })).toEqual({ ok: true });
+  });
+
+  it("營業時間依星期設定：週六改 17:00 收診，先預覽受影響預約，儲存後標衝突、17:00 後不能約，並寫入紀錄", async () => {
+    // 下一個週六（至少 2 天後）
+    const d = new Date(Date.now() + 8 * 3_600_000);
+    d.setUTCDate(d.getUTCDate() + 2);
+    while (d.getUTCDay() !== 6) d.setUTCDate(d.getUTCDate() + 1);
+    const sat = d.toISOString().slice(0, 10);
+    const late = await booking.createSalesAppointment(salesA, spA, input({ date: sat, start: "18:00" }), "sat-18", false);
+    if (!late.ok) throw new Error(late.message);
+
+    const days = [1, 2, 3, 4, 5].map((weekday) => ({ weekday, start: "10:00", end: "19:00" })).concat([{ weekday: 6, start: "10:00", end: "17:00" }]);
+    const preview = await admin.saveOpening(boss, false, days);
+    expect(preview).toMatchObject({ ok: true, phase: "preview" });
+    expect((preview as { affected: { id: string }[] }).affected.map((x) => x.id)).toEqual([late.id]);
+
+    expect(await admin.saveOpening(boss, true, days)).toMatchObject({ ok: true, phase: "saved", changed: 1 });
+    const [row] = await raw`select conflict_status, conflict_reasons from appointments where id = ${late.id}`;
+    expect(row).toMatchObject({ conflict_status: "conflict", conflict_reasons: ["OUTSIDE_HOURS"] });
+    expect((await raw`select count(*)::int as n from opening_rules`)[0].n).toBe(2);
+
+    const slots = await booking.salesSlots(sat, false);
+    expect(slots.map((x) => x.start).at(-1)).toBe("16:00");
+    expect(await booking.createSalesAppointment(salesB, spB, input({ date: sat, start: "17:00", phone: "0988777666" }), "sat-17", false)).toMatchObject({ ok: false, code: "OUTSIDE_HOURS" });
+
+    const [log] = await raw`select changes from audit_logs where action = 'opening-update' order by created_at desc limit 1`;
+    expect(log.changes.detail).toEqual({ from: "週一至週六 10:00–19:00", to: "週一至週五 10:00–19:00；週六 10:00–17:00" });
+
+    expect(await admin.saveOpening(boss, true, [{ weekday: 6, start: "17:00", end: "10:00" }])).toMatchObject({ ok: false });
+    // 還原成初始設定，避免影響其他測試
+    await admin.saveOpening(boss, true, [1, 2, 3, 4, 5, 6].map((weekday) => ({ weekday, start: "10:00", end: "19:00" })));
   });
 
   it("停用最後一位店長被擋下；有未來預約的業務需先轉出才能停用", async () => {

@@ -11,13 +11,13 @@ export default async function MyAppointments({ searchParams }: PageProps<"/appoi
   const onlyConflict = sp.filter === "conflict";
   const me = await requireUser(["sales"]);
   const all = await listOwnAppointments(me.salesperson!.id);
-  const { itemName } = await getNames();
+  const { itemNames } = await getNames();
   const conflictCount = all.filter((a) => a.status === "active" && a.conflictStatus === "conflict").length;
   const rows = all.filter(
     (a) =>
       (status === "all" || a.status === status) &&
       (!onlyConflict || a.conflictStatus === "conflict") &&
-      (!q || a.customerName.includes(q) || a.phone.includes(q) || a.code.includes(q) || itemName(a.itemId).includes(q)),
+      (!q || a.customerName.includes(q) || a.phone.includes(q) || a.code.includes(q) || itemNames(a.itemIds).includes(q)),
   );
 
   return (
@@ -67,7 +67,7 @@ export default async function MyAppointments({ searchParams }: PageProps<"/appoi
                     <tr key={a.id}>
                       <td>{displayDate(a.date)}<small>{a.start}–{a.end}</small></td>
                       <td>{a.customerName}<small>{a.phone}</small></td>
-                      <td>{itemName(a.itemId)}<small>{a.partySize} 人・{a.requiresDoctor ? "需醫師" : "僅護理師"}</small></td>
+                      <td>{itemNames(a.itemIds)}<small>{a.partySize} 人・{a.requiresDoctor ? "需醫師" : "僅護理師"}</small></td>
                       <td>
                         <span className={`badge ${STATUS_BADGE[a.status]}`}>{STATUS_LABEL[a.status]}</span>
                         {a.conflictStatus === "conflict" && <><br /><span className="badge red" style={{ marginTop: 6 }}>需處理：{a.conflictReasons.map((r) => CONFLICT_LABEL[r]).join("、")}</span></>}
@@ -84,7 +84,7 @@ export default async function MyAppointments({ searchParams }: PageProps<"/appoi
                   <div>
                     <div className="when">{a.date.slice(5).replace("-", "/")}　{a.start}</div>
                     <div className="who">{a.customerName}</div>
-                    <div className="meta">{itemName(a.itemId)}・{a.partySize} 人</div>
+                    <div className="meta">{itemNames(a.itemIds)}・{a.partySize} 人</div>
                     {a.conflictStatus === "conflict" && <div className="meta" style={{ color: "var(--red)" }}>⚠ 需處理：{a.conflictReasons.map((r) => CONFLICT_LABEL[r]).join("、")}</div>}
                   </div>
                   <span className={`badge ${STATUS_BADGE[a.status]}`} style={{ alignSelf: "start" }}>{STATUS_LABEL[a.status]}</span>

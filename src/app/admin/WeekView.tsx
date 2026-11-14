@@ -26,7 +26,7 @@ export interface WeekViewProps {
   all: Appointment[];
   visible: Appointment[];
   schedule: ScheduleData;
-  names: { itemName: (id: string) => string; doctorName: (id: string | null) => string; salespersonName: (id: string) => string };
+  names: { itemNames: (ids: string[]) => string; doctorName: (id: string | null) => string; salespersonName: (id: string) => string };
   dayHref: (date: string) => string;
 }
 
@@ -69,7 +69,7 @@ export function WeekView({ date, today, all, visible, schedule, names, dayHref }
       .filter(Boolean)
       .join(" ");
   const chipTitle = (a: Appointment) =>
-    `${a.start} ${a.customerName}・${a.partySize} 人・${names.itemName(a.itemId)}・${a.requiresDoctor ? names.doctorName(a.assignedDoctorId) : "僅護理師"}・${names.salespersonName(a.salespersonId)}・${STATUS_LABEL[a.status]}`;
+    `${a.start} ${a.customerName}・${a.partySize} 人・${names.itemNames(a.itemIds)}・${a.requiresDoctor ? names.doctorName(a.assignedDoctorId) : "僅護理師"}・${names.salespersonName(a.salespersonId)}・${STATUS_LABEL[a.status]}`;
 
   return (
     <>

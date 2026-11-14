@@ -12,6 +12,8 @@ import { AdminHeader, Footer } from "@/components/Chrome";
 import { ActionForm } from "@/components/ActionForm";
 import { editByManager, keepConflict, reassign, setStatus } from "../../actions";
 import { ManagerReschedule } from "./ManagerReschedule";
+import { ItemPicker } from "@/components/ItemPicker";
+import { openingHourRange } from "@/lib/domain/schedule";
 
 export default async function AdminDetail({ params }: PageProps<"/admin/appointments/[id]">) {
   const { id } = await params;
@@ -19,14 +21,13 @@ export default async function AdminDetail({ params }: PageProps<"/admin/appointm
   const a = await findAppointment(sql(), id);
   if (!a) notFound();
   const db = await pageRef();
-  const { doctorName, itemName, salespersonName, userName } = namesOf(db);
+  const { doctorName, itemName, itemNames, salespersonName, userName } = namesOf(db);
   const started = minutesUntil(new Date(), a.date, a.start) <= 0;
   const hidden = <><input type="hidden" name="id" value={a.id} /><input type="hidden" name="version" value={a.version} /></>;
   // 操作紀錄僅店長可看（規格 6、驗收 19：代理店長不可查看）
   const isAdmin = me.user.role === "admin";
   const history = isAdmin ? await listAudit(sql(), "appointment", a.id) : [];
-  const opening = db.openings[0];
-  const hours = opening ? Array.from({ length: Number(opening.end.slice(0, 2)) - Number(opening.start.slice(0, 2)) }, (_, i) => `${String(Number(opening.start.slice(0, 2)) + i).padStart(2, "0")}:00`) : [];
+  const hours = openingHourRange(db.openings).map((h) => `${String(h).padStart(2, "0")}:00`);
 
   return (
     <>
@@ -51,7 +52,7 @@ export default async function AdminDetail({ params }: PageProps<"/admin/appointm
               {[
                 ["日期時段", `${displayDate(a.date)}　${a.start}–${a.end}`],
                 ["電話", a.phone],
-                ["預約項目", `${itemName(a.itemId)}　${a.partySize} 人`],
+                ["預約項目", `${itemNames(a.itemIds)}　${a.partySize} 人`],
                 ["服務方式", a.requiresDoctor ? `需安排醫師（${doctorName(a.assignedDoctorId)}）` : "僅由護理師服務"],
                 ["負責業務", salespersonName(a.salespersonId)],
                 ["建立者", userName(a.createdBy)],
@@ -102,12 +103,8 @@ export default async function AdminDetail({ params }: PageProps<"/admin/appointm
                         <label className="field">預約姓名<input name="customerName" defaultValue={a.customerName} required /></label>
                         <label className="field">聯絡電話<input name="phone" defaultValue={a.phone} required /></label>
                       </div>
+                      <ItemPicker items={db.items.filter((i) => i.active || a.itemIds.includes(i.id)).sort((x, y) => x.sortOrder - y.sortOrder).map((i) => ({ id: i.id, name: i.name }))} defaultSelected={a.itemIds} />
                       <div className="two">
-                        <label className="field">預約項目
-                          <select name="itemId" defaultValue={a.itemId}>
-                            {db.items.filter((i) => i.active || i.id === a.itemId).map((i) => <option key={i.id} value={i.id}>{i.name}</option>)}
-                          </select>
-                        </label>
                         <label className="field">人數<input name="partySize" inputMode="numeric" defaultValue={a.partySize} /></label>
                       </div>
                       <label className="field">希望指定的醫師<input name="preferredDoctorNote" defaultValue={a.preferredDoctorNote} /></label>

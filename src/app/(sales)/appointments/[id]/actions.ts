@@ -2,6 +2,7 @@
 import { refresh } from "next/cache";
 import { requireUser } from "@/lib/auth/session";
 import { updateSalesAppointment } from "@/lib/booking";
+import { sameItems } from "@/lib/domain/rules";
 
 export type FormState = { ok: boolean; message: string } | null;
 
@@ -27,11 +28,11 @@ export async function saveBasics(_p: FormState, f: FormData): Promise<FormState>
 }
 
 export async function saveService(_p: FormState, f: FormData): Promise<FormState> {
-  const orig = JSON.parse(String(f.get("orig") ?? "{}")) as { itemId: string; requiresDoctor: boolean };
-  const itemId = String(f.get("itemId") ?? "");
+  const orig = JSON.parse(String(f.get("orig") ?? "{}")) as { itemIds?: string[]; requiresDoctor: boolean };
+  const itemIds = f.getAll("itemIds").map(String);
   const requiresDoctor = f.get("requiresDoctor") === "yes";
-  const changes: { itemId?: string; requiresDoctor?: boolean } = {};
-  if (itemId !== orig.itemId) changes.itemId = itemId;
+  const changes: { itemIds?: string[]; requiresDoctor?: boolean } = {};
+  if (!sameItems(itemIds, orig.itemIds ?? [])) changes.itemIds = itemIds;
   if (requiresDoctor !== orig.requiresDoctor) changes.requiresDoctor = requiresDoctor;
   if (Object.keys(changes).length === 0) return { ok: false, message: "沒有任何變更。" };
   return run(String(f.get("id")), Number(f.get("version")), changes, "服務內容已更新。");

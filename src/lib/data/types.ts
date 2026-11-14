@@ -49,7 +49,8 @@ export interface Appointment {
   date: string;
   start: string;
   end: string;
-  itemId: string;
+  /** 預約項目（可複選，依選擇順序；至少 1 個） */
+  itemIds: string[];
   partySize: number;
   requiresDoctor: boolean;
   assignedDoctorId: string | null;

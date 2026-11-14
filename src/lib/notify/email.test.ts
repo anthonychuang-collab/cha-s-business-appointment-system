@@ -10,7 +10,7 @@ const names: Names = {
 
 const appt: Appointment = {
   id: "a1", code: "PI-20261117-001", customerName: "王小明", phone: "0912-345-678", phoneNormalized: "0912345678",
-  date: "2026-11-17", start: "14:00", end: "15:00", itemId: "i1", partySize: 2, requiresDoctor: true, assignedDoctorId: "d1",
+  date: "2026-11-17", start: "14:00", end: "15:00", itemIds: ["i1"], partySize: 2, requiresDoctor: true, assignedDoctorId: "d1",
   preferredDoctorNote: "", careNote: "對花生過敏，需輪椅協助", salespersonId: "s1", status: "active", isOverbooked: false, overbookReason: "",
   conflictStatus: "none", conflictReasons: [], conflictKeptReasons: [], conflictKeptNote: "", createdBy: "u1", updatedBy: "u1",
   createdAt: "2026-11-13T08:00:00.000Z", updatedAt: "2026-11-13T08:00:00.000Z", cancelledAt: null, version: 1,
@@ -35,6 +35,12 @@ describe("describeChanges", () => {
       { label: "負責業務", from: "業務甲", to: "業務乙" },
       { label: "狀態", from: "已預約", to: "已取消" },
     ]);
+  });
+
+  it("複選項目：前後都列出所有項目名稱；舊紀錄的單一項目也看得懂", () => {
+    expect(describeChanges({ itemIds: { from: ["i1"], to: ["i1", "i2"] } }, names)).toEqual([{ label: "項目", from: "療程諮詢", to: "療程諮詢、疫苗" }]);
+    expect(describeChanges({ itemId: { from: "i1", to: "i2" } }, names)).toEqual([{ label: "項目", from: "療程諮詢", to: "疫苗" }]);
+    expect(snapshotOf({ ...appt, itemIds: ["i2", "i1"] }, names).itemName).toBe("疫苗、療程諮詢");
   });
 
   it("照護備註只寫已修改，不帶任何內容", () => {

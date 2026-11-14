@@ -107,7 +107,7 @@ export async function loadRef(q: Q): Promise<Ref> {
 
 const mapAppointment = (r: Row): Appointment => ({
   id: String(r.id), code: String(r.code), customerName: String(r.customer_name), phone: String(r.phone), phoneNormalized: String(r.phone_normalized),
-  date: String(r.appointment_date), start: hm(r.start_time), end: hm(r.end_time), itemId: String(r.item_id), partySize: Number(r.party_size),
+  date: String(r.appointment_date), start: hm(r.start_time), end: hm(r.end_time), itemIds: ((r.item_ids as string[] | null)?.length ? (r.item_ids as string[]) : [String(r.item_id)]).map(String), partySize: Number(r.party_size),
   requiresDoctor: Boolean(r.requires_doctor), assignedDoctorId: r.assigned_doctor_id == null ? null : String(r.assigned_doctor_id),
   preferredDoctorNote: String(r.preferred_doctor_note), careNote: String(r.care_note), salespersonId: String(r.salesperson_id),
   status: r.status as Appointment["status"], isOverbooked: Boolean(r.is_overbooked), overbookReason: String(r.overbook_reason),
@@ -120,7 +120,7 @@ const mapAppointment = (r: Row): Appointment => ({
 function appointmentColumns(a: Appointment) {
   return {
     code: a.code, customer_name: a.customerName, phone: a.phone, phone_normalized: a.phoneNormalized,
-    appointment_date: a.date, start_time: a.start, end_time: a.end, item_id: a.itemId, party_size: a.partySize,
+    appointment_date: a.date, start_time: a.start, end_time: a.end, item_id: a.itemIds[0], item_ids: a.itemIds, party_size: a.partySize,
     requires_doctor: a.requiresDoctor, assigned_doctor_id: a.assignedDoctorId, preferred_doctor_note: a.preferredDoctorNote,
     care_note: a.careNote, salesperson_id: a.salespersonId, status: a.status, is_overbooked: a.isOverbooked,
     overbook_reason: a.overbookReason, conflict_status: a.conflictStatus, conflict_reasons: a.conflictReasons,
@@ -205,7 +205,7 @@ export async function saveAppointment(q: Q, a: Appointment, expectedVersion: num
 }
 
 export async function itemsInUse(q: Q): Promise<Set<string>> {
-  const rows = await q`select distinct item_id from appointments`;
+  const rows = await q`select distinct unnest(item_ids) as item_id from appointments`;
   return new Set(rows.map((r) => String(r.item_id)));
 }
 
@@ -368,13 +368,14 @@ export async function deleteBlock(q: Q, id: string): Promise<void> {
   if (isUuid(id)) await q`delete from schedule_blocks where id = ${id}`;
 }
 
-export async function replaceOpening(q: Q, o: OpeningRow): Promise<void> {
-  await q`delete from opening_rules where id <> ${o.id}`;
-  await q`
-    insert into opening_rules (id, weekdays, start_time, end_time, effective_from, effective_to)
-    values (${o.id}, ${o.weekdays}::smallint[], ${o.start}, ${o.end}, ${o.effectiveFrom}, ${o.effectiveTo})
-    on conflict (id) do update set weekdays = excluded.weekdays, start_time = excluded.start_time, end_time = excluded.end_time,
-      effective_from = excluded.effective_from, effective_to = excluded.effective_to, updated_at = now()`;
+/** 營業時間整組替換（依星期分別設定，相同時間的星期為同一列） */
+export async function replaceOpenings(q: Q, rows: OpeningRow[]): Promise<void> {
+  await q`delete from opening_rules`;
+  for (const o of rows) {
+    await q`
+      insert into opening_rules (id, weekdays, start_time, end_time, effective_from, effective_to)
+      values (${o.id}, ${o.weekdays}::smallint[], ${o.start}, ${o.end}, ${o.effectiveFrom}, ${o.effectiveTo})`;
+  }
 }
 
 // ---------- 項目 ----------

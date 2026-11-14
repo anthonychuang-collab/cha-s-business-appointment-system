@@ -47,7 +47,7 @@ describe.skipIf(!url)("操作紀錄（TEST_DATABASE_URL）", () => {
 
     // 產生各種紀錄
     const r = await booking.createSalesAppointment(sales, sp, {
-      customerName: "紀錄測試客戶", phone: "0955123456", itemId, partySize: 1, requiresDoctor: false, doctorId: null,
+      customerName: "紀錄測試客戶", phone: "0955123456", itemIds: [itemId], partySize: 1, requiresDoctor: false, doctorId: null,
       date: bookableDate(), start: "10:00", preferredDoctorNote: "", careNote: "不要記下這段照護內容",
     }, "au-1", false);
     if (!r.ok) throw new Error(r.message);

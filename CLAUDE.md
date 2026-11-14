@@ -21,8 +21,8 @@
 npm install
 cp .env.example .env.local   # 填 DATABASE_URL、TEST_DATABASE_URL（本機 PostgreSQL）
 npm run dev        # 開發伺服器；本機資料庫會自動 migrate 並建立 dev-admin / dev-sales-a / dev-sales-b / dev-deputy
-npm test           # 156 個規則、信件、紀錄格式與連線字串單元測試（設了 TEST_DATABASE_URL 時另跑資料庫整合測試）
-npm run test:db    # 讀 .env.local，跑全部 204 個（含並行整合測試；會清空 TEST_DATABASE_URL）
+npm test           # 單元測試（規則、信件、紀錄格式、連線字串；設了 TEST_DATABASE_URL 時另跑資料庫整合測試）
+npm run test:db    # 讀 .env.local，跑全部 223 個（含並行整合測試；會清空 TEST_DATABASE_URL）
 npm run typecheck
 npm run build
 npm run db:reset   # 清空本機資料庫並重建（e2e 前先跑）
@@ -44,6 +44,8 @@ python3 tests/e2e/booking_flow.py http://localhost:3000 e2e-shots   # Playwright
 - **時間一律台北時間**：使用 `src/lib/domain/time.ts`，不可依賴主機時區（Vercel 為 UTC）；伺服器端也不要用 `toLocaleString` 產生要比對或寄出的文字（各主機 ICU 輸出不同，例如空白字元），用 `lib/notify/email.ts` 的 `taipeiTime()`。
 - **操作紀錄**：每個異動都要寫 audit_logs，`changes` 存「看得懂的內容」（名稱、時段等當下文字，或 `{ from, to }`），不存密碼、雜湊、照護備註原文。新增動作時同步在 `src/lib/audit-format.ts` 補中文名稱。全院操作紀錄只有店長能看（代理店長、業務都不行）；業務在自己名下預約的詳情頁只看得到該筆的時間軸（動作、誰、何時，不含內容與原因），這是刻意保留的設計（規格 12），不要移除。
 - **通知與寄信**：事件一律在預約交易內呼叫 `notify()` 寫入（含寄信用的 payload），**絕不在交易內寄信**；交易提交後由 `lib/notify/deliver.ts` 寄送。信件內容只在 `lib/notify/email.ts` 產生，照護備註永遠只寫「已修改」。
+- **預約項目可複選**：`Appointment.itemIds`（1–5 個，依選擇順序），選擇規則在 `domain/rules.ts` 的 `checkItemSelection`；顯示用 `namesOf(ref).itemNames(ids)`。資料庫 `item_id` 只為相容舊版保留（觸發器自動同步），新程式一律讀寫 `item_ids`。
+- **營業時間**：可依星期設定多條規則，一律用 `openingFor(schedule, date)` 取當天的；不要再假設只有 `openings[0]`。
 - **介面全部繁體中文**；顏色、字體、間距只改 `src/app/globals.css` 的 `:root` 變數。
 - **不可放假資料或示範人名進正式環境**；不可在前端寫固定密碼；不可把姓名、電話、照護備註放進網址或 localStorage。
 
@@ -67,4 +69,4 @@ python3 tests/e2e/booking_flow.py http://localhost:3000 e2e-shots   # Playwright
 
 ## 待使用者提供（不阻擋開發）
 
-週五醫師姓名、真實業務名單、代理人人選、通知收件 email 與寄信網域、Vercel／Supabase／Resend 帳號、品牌方對 Logo 與照片使用權的確認、週六營業時間（官網 17:00 vs 系統 19:00）。
+週五醫師姓名、真實業務名單、代理人人選、通知收件 email 與寄信網域、Vercel／Supabase／Resend 帳號、品牌方對 Logo 與照片使用權的確認、~~週六營業時間~~（2026-11-14 確認 10:00–17:00，後台「營業時間」已可依星期設定）。

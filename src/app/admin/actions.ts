@@ -26,6 +26,7 @@ export async function createByManager(input: AdminCreateInput, idemKey: string) 
   const me = await managers();
   const r = await createAdminAppointment(me.user, {
     ...input,
+    itemIds: Array.isArray(input.itemIds) ? input.itemIds.map(String).slice(0, 20) : [],
     partySize: Number(input.partySize), requiresDoctor: input.requiresDoctor === true, acknowledgedWarnings: input.acknowledgedWarnings === true,
     doctorId: input.doctorId || null,
   }, `${me.user.id}:${idemKey.slice(0, 64)}`);
@@ -60,7 +61,7 @@ export async function rescheduleByManager(_p: ActionState, f: FormData): Promise
 export async function editByManager(_p: ActionState, f: FormData): Promise<ActionState> {
   const me = await managers();
   const r = await adminUpdateBasics(me.user, s(f, "id"), Number(f.get("version")), {
-    customerName: s(f, "customerName"), phone: s(f, "phone"), partySize: Number(f.get("partySize")), itemId: s(f, "itemId"),
+    customerName: s(f, "customerName"), phone: s(f, "phone"), partySize: Number(f.get("partySize")), itemIds: f.getAll("itemIds").map(String),
     careNote: s(f, "careNote"), preferredDoctorNote: s(f, "preferredDoctorNote"),
   });
   return done(r.ok, r.ok ? "已儲存。" : r.message);
@@ -129,7 +130,10 @@ export async function removeBlockAction(_p: ActionState, f: FormData): Promise<A
 
 export async function saveOpeningAction(_p: ActionState, f: FormData): Promise<ActionState> {
   const me = await adminOnly();
-  return scheduleResult(await admin.saveOpening(me.user, f.get("commit") === "1", { weekdays: f.getAll("weekdays").map(Number), start: s(f, "start"), end: s(f, "end") }));
+  const days = [1, 2, 3, 4, 5, 6, 7]
+    .filter((w) => f.get(`open_${w}`) === "1")
+    .map((w) => ({ weekday: w, start: s(f, `start_${w}`), end: s(f, `end_${w}`) }));
+  return scheduleResult(await admin.saveOpening(me.user, f.get("commit") === "1", days));
 }
 
 // ---------- 項目與設定 ----------

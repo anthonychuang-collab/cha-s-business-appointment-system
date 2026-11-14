@@ -11,7 +11,7 @@ export default async function Done({ params }: PageProps<"/book/done/[id]">) {
   const a = await getOwnAppointment(me.salesperson!.id, id);
   // 只有本人建立的預約才看得到成功頁
   if (!a || a.createdBy !== me.user.id) notFound();
-  const { doctorName, itemName } = await getNames();
+  const { doctorName, itemNames } = await getNames();
 
   return (
     <>
@@ -27,7 +27,7 @@ export default async function Done({ params }: PageProps<"/book/done/[id]">) {
             <div className="bigdate">{displayDate(a.date)}</div>
             <h3 style={{ marginTop: 12 }}>{a.start} — {a.end}</h3>
             <div className="sumline">
-              {a.customerName}　·　{itemName(a.itemId)}　·　{a.partySize} 人
+              {a.customerName}　·　{itemNames(a.itemIds)}　·　{a.partySize} 人
               <small>{a.requiresDoctor ? `安排醫師：${doctorName(a.assignedDoctorId)}` : "僅由護理師服務"}　·　負責業務 {me.salesperson!.displayName}</small>
             </div>
           </div>

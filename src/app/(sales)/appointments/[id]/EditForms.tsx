@@ -1,5 +1,6 @@
 "use client";
 import { startTransition, useActionState, useState, useTransition } from "react";
+import { ItemPicker } from "@/components/ItemPicker";
 import { DateSlotPicker, type PickValue, type ShiftHint } from "@/components/DateSlotPicker";
 import { cancelAppointment, reschedule, saveBasics, saveService, type FormState } from "./actions";
 
@@ -30,20 +31,14 @@ export function BasicsForm(props: { id: string; version: number; values: { custo
   );
 }
 
-export function ServiceForm(props: { id: string; version: number; itemId: string; requiresDoctor: boolean; items: { id: string; name: string }[]; canItem: boolean; canDoctor: boolean; onlyToNurse: boolean }) {
+export function ServiceForm(props: { id: string; version: number; itemIds: string[]; requiresDoctor: boolean; items: { id: string; name: string }[]; canItem: boolean; canDoctor: boolean; onlyToNurse: boolean }) {
   const [state, action, pending] = useActionState(saveService, null);
   return (
     <form onSubmit={(e) => { e.preventDefault(); const fd = new FormData(e.currentTarget, (e.nativeEvent as SubmitEvent).submitter); startTransition(() => action(fd)); }}>
       <input type="hidden" name="id" value={props.id} />
       <input type="hidden" name="version" value={props.version} />
-      <input type="hidden" name="orig" value={JSON.stringify({ itemId: props.itemId, requiresDoctor: props.requiresDoctor })} />
-      <label className="field">
-        預約項目
-        <select name="itemId" defaultValue={props.itemId} disabled={!props.canItem}>
-          {props.items.map((i) => <option key={i.id} value={i.id}>{i.name}</option>)}
-        </select>
-        {!props.canItem && <input type="hidden" name="itemId" value={props.itemId} />}
-      </label>
+      <input type="hidden" name="orig" value={JSON.stringify({ itemIds: props.itemIds, requiresDoctor: props.requiresDoctor })} />
+      <ItemPicker items={props.items} defaultSelected={props.itemIds} disabled={!props.canItem} />
       <fieldset className="fieldset" disabled={!props.canDoctor}>
         <legend>是否需要醫師</legend>
         <label className="check" style={{ marginTop: 0 }}>

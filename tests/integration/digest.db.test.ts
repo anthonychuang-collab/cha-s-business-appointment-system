@@ -39,7 +39,7 @@ describe.skipIf(!url)("每日日報（TEST_DATABASE_URL）", () => {
   /** 建一筆預約並做 n 次一般修改（一般修改預設為「日報」） */
   async function edits(key: string, start: string, n: number) {
     const r = await booking.createSalesAppointment(sales, sp, {
-      customerName: `日報客戶${key}`, phone: `0933${String(++phoneSeq).padStart(6, "0")}`, itemId, partySize: 1,
+      customerName: `日報客戶${key}`, phone: `0933${String(++phoneSeq).padStart(6, "0")}`, itemIds: [itemId], partySize: 1,
       requiresDoctor: false, doctorId: null, date: bookableDate(), start, preferredDoctorNote: "", careNote: "",
     }, key, true);
     if (!r.ok) throw new Error(r.message);

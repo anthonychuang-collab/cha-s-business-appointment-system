@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { checkSalesCreate, checkSalesEdit, type ExistingAppointment } from "./rules";
+import { checkItemSelection, checkSalesCreate, checkSalesEdit, MAX_ITEMS, sameItems, type ExistingAppointment } from "./rules";
 
 // 台北 2026-11-14（週六）10:00
 const NOW = new Date("2026-11-14T02:00:00Z");
@@ -54,7 +54,7 @@ describe("checkSalesEdit 業務修改自己的預約（規格 5.3）", () => {
     });
 
     it("可以取消、改項目、改醫師需求", () => {
-      for (const changes of [{ cancel: true as const }, { itemId: "x" }, { requiresDoctor: true }]) {
+      for (const changes of [{ cancel: true as const }, { itemIds: ["x"] }, { requiresDoctor: true }]) {
         expect(checkSalesEdit({ now: NOW, maxDays: MAX_DAYS, appointment: appt(), changes }).ok).toBe(true);
       }
     });
@@ -83,7 +83,7 @@ describe("checkSalesEdit 業務修改自己的預約（規格 5.3）", () => {
     it.each([
       ["改期", { time: { date: "2026-11-16", start: "10:00" } }],
       ["取消", { cancel: true as const }],
-      ["改項目", { itemId: "x" }],
+      ["改項目", { itemIds: ["x"] }],
       ["改醫師需求", { requiresDoctor: false }],
     ])("%s 不可", (_label, changes) => {
       const r = checkSalesEdit({ now: NOW, maxDays: MAX_DAYS, appointment: soon, changes });
@@ -124,7 +124,7 @@ describe("checkSalesEdit 業務修改自己的預約（規格 5.3）", () => {
       expect(r).toMatchObject({ ok: false, reason: "WITHIN_4H" });
     });
     it("4 小時內仍不可改項目", () => {
-      const r = checkSalesEdit({ now: NOW, maxDays: MAX_DAYS, appointment: conflict, changes: { itemId: "x" } });
+      const r = checkSalesEdit({ now: NOW, maxDays: MAX_DAYS, appointment: conflict, changes: { itemIds: ["x"] } });
       expect(r).toMatchObject({ ok: false, reason: "WITHIN_4H" });
     });
     it("已標記保留的預約不再享有例外", () => {
@@ -157,5 +157,36 @@ describe("checkSalesEdit 業務修改自己的預約（規格 5.3）", () => {
       const r = checkSalesEdit({ now: NOW, maxDays: MAX_DAYS, appointment: appt(), changes: {} });
       expect(r).toMatchObject({ ok: false, reason: "NO_CHANGES" });
     });
+  });
+});
+
+describe("checkItemSelection：預約項目複選", () => {
+  const active = ["a", "b", "c", "d", "e", "f"];
+
+  it("保留選擇順序並去除重複", () => {
+    expect(checkItemSelection({ selected: ["c", "a", "c"], activeIds: active })).toEqual({ ok: true, itemIds: ["c", "a"] });
+  });
+
+  it("至少選一項", () => {
+    expect(checkItemSelection({ selected: [], activeIds: active })).toEqual({ ok: false, reason: "ITEM_REQUIRED" });
+    expect(checkItemSelection({ selected: ["", " "], activeIds: active })).toEqual({ ok: false, reason: "ITEM_REQUIRED" });
+  });
+
+  it(`最多 ${MAX_ITEMS} 項`, () => {
+    expect(checkItemSelection({ selected: active.slice(0, MAX_ITEMS), activeIds: active }).ok).toBe(true);
+    expect(checkItemSelection({ selected: active, activeIds: active })).toEqual({ ok: false, reason: "ITEM_TOO_MANY" });
+  });
+
+  it("不能選停用或不存在的項目；原本就在預約上的停用項目可以保留", () => {
+    expect(checkItemSelection({ selected: ["a", "zzz"], activeIds: active })).toEqual({ ok: false, reason: "ITEM_INVALID" });
+    expect(checkItemSelection({ selected: ["a", "old"], activeIds: active })).toEqual({ ok: false, reason: "ITEM_INVALID" });
+    expect(checkItemSelection({ selected: ["a", "old"], activeIds: active, alreadyOnAppointment: ["old"] })).toEqual({ ok: true, itemIds: ["a", "old"] });
+  });
+});
+
+describe("sameItems", () => {
+  it("順序不同視為相同", () => {
+    expect(sameItems(["a", "b"], ["b", "a"])).toBe(true);
+    expect(sameItems(["a"], ["a", "b"])).toBe(false);
   });
 });

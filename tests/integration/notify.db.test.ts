@@ -34,7 +34,7 @@ describe.skipIf(!url)("即時信寄送（TEST_DATABASE_URL）", () => {
     return d.toISOString().slice(0, 10);
   }
   const input = (over: Partial<import("@/lib/booking").BookingInput> = {}) => ({
-    customerName: "通知測試客戶", phone: "0912000111", itemId, partySize: 1, requiresDoctor: false, doctorId: null,
+    customerName: "通知測試客戶", phone: "0912000111", itemIds: [itemId], partySize: 1, requiresDoctor: false, doctorId: null,
     date: bookableDate(), start: "11:00", preferredDoctorNote: "", careNote: "糖尿病，需低糖點心", ...over,
   });
 
@@ -222,7 +222,7 @@ describe.skipIf(!url)("即時信寄送（TEST_DATABASE_URL）", () => {
 
   it("代理店長操作：店長收到即時信並看到修改前後", async () => {
     const id = await book("dp-1");
-    const r = await booking.adminUpdateBasics(deputy, id, 1, { customerName: "改過的名字", phone: "0912000111", partySize: 3, itemId, careNote: "新的照護內容", preferredDoctorNote: "" });
+    const r = await booking.adminUpdateBasics(deputy, id, 1, { customerName: "改過的名字", phone: "0912000111", partySize: 3, itemIds: [itemId], careNote: "新的照護內容", preferredDoctorNote: "" });
     expect(r.ok).toBe(true);
     await deliver.deliverPendingEmails();
     const m = sent.find((x) => x.subject.includes("代理店長操作"))!;

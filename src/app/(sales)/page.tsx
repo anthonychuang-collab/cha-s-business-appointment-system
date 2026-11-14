@@ -1,15 +1,14 @@
 import Link from "next/link";
 import { requireUser } from "@/lib/auth/session";
 import { listOwnAppointments, pageRef } from "@/lib/booking";
-import { WEEKDAY_LABEL } from "@/lib/format";
+import { summarizeOpenings } from "@/lib/domain/schedule";
 import { Footer, SalesHeader } from "@/components/Chrome";
 
 export default async function Home() {
   const me = await requireUser(["sales"]);
   const mine = (await listOwnAppointments(me.salesperson!.id)).filter((a) => a.status === "active");
   const conflicts = mine.filter((a) => a.conflictStatus === "conflict").length;
-  const opening = (await pageRef()).openings[0];
-  const days = opening ? `${WEEKDAY_LABEL[opening.weekdays[0]]}至${WEEKDAY_LABEL[opening.weekdays.at(-1)!]}` : "";
+  const hoursText = summarizeOpenings((await pageRef()).openings);
 
   return (
     <>
@@ -22,7 +21,7 @@ export default async function Home() {
             <div className="english">Care begins with a moment.</div>
             <p>{me.user.displayName}，從一個簡單的預約開始，<br />讓專業照護自然融入生活。</p>
             <Link className="btn" href="/book">建立新預約　↗</Link>
-            {opening && <p className="muted">{days} {opening.start}–{opening.end} · 每次預約 60 分鐘</p>}
+            {hoursText && <p className="muted">{hoursText} · 每次預約 60 分鐘</p>}
           </div>
           <div className="arch">
             {/* eslint-disable-next-line @next/next/no-img-element */}

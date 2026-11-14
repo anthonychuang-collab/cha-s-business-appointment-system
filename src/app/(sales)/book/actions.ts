@@ -11,7 +11,7 @@ export async function submitBooking(input: BookingInput, idemKey: string, confir
   const clean: BookingInput = {
     customerName: String(input.customerName ?? ""),
     phone: String(input.phone ?? ""),
-    itemId: String(input.itemId ?? ""),
+    itemIds: Array.isArray(input.itemIds) ? input.itemIds.map(String).slice(0, 20) : [],
     partySize: Number(input.partySize),
     requiresDoctor: input.requiresDoctor === true,
     doctorId: input.doctorId ? String(input.doctorId) : null,

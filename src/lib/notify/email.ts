@@ -57,18 +57,20 @@ export interface Names {
 export function snapshotOf(a: Appointment, n: Names): AppointmentSnapshot {
   return {
     code: a.code, date: a.date, start: a.start, end: a.end, customerName: a.customerName, phone: a.phone,
-    itemName: n.itemName(a.itemId), partySize: a.partySize, requiresDoctor: a.requiresDoctor,
+    itemName: a.itemIds.map(n.itemName).join("、"), partySize: a.partySize, requiresDoctor: a.requiresDoctor,
     doctorName: a.requiresDoctor ? n.doctorName(a.assignedDoctorId) : "—", salespersonName: n.salespersonName(a.salespersonId), status: a.status,
   };
 }
 
 /** 信件裡要列出的欄位與顯示方式；未列出的（內部欄位）不寄 */
-const FIELDS: Partial<Record<keyof Appointment, { label: string; show: (v: unknown, n: Names) => string }>> = {
+/** 鍵包含舊版單選時期的 itemId，讓舊的操作紀錄與通知也能顯示 */
+const FIELDS: Partial<Record<keyof Appointment | "itemId", { label: string; show: (v: unknown, n: Names) => string }>> = {
   customerName: { label: "姓名", show: (v) => String(v) },
   phone: { label: "電話", show: (v) => String(v) },
   date: { label: "日期", show: (v) => String(v) },
   start: { label: "時段", show: (v) => String(v) },
-  itemId: { label: "項目", show: (v, n) => n.itemName(String(v)) },
+  itemId: { label: "項目", show: (v, n) => n.itemName(String(v)) }, // 舊紀錄（單選時期）
+  itemIds: { label: "項目", show: (v, n) => (Array.isArray(v) ? v.map((id) => n.itemName(String(id))).join("、") : n.itemName(String(v))) },
   partySize: { label: "人數", show: (v) => `${v} 人` },
   requiresDoctor: { label: "醫師需求", show: (v) => (v ? "需醫師" : "僅護理師") },
   assignedDoctorId: { label: "安排醫師", show: (v, n) => n.doctorName((v as string | null) ?? null) },
@@ -97,7 +99,7 @@ export function describeChanges(diff: Record<string, unknown>, n: Names): Change
       out.push({ label: "照護備註", from: "", to: "已修改（內容請登入後台查看）" });
       continue;
     }
-    const f = FIELDS[key as keyof Appointment];
+    const f = FIELDS[key as keyof typeof FIELDS];
     if (!f || typeof value !== "object" || value === null || !("from" in value) || !("to" in value)) continue;
     const { from, to } = value as { from: unknown; to: unknown };
     out.push({ label: f.label, from: f.show(from, n), to: f.show(to, n) });

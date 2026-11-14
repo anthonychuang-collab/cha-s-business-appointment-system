@@ -5,12 +5,13 @@
  * - 上一步保留資料；資料只存在記憶體（不寫 localStorage、不放網址）
  */
 import { useEffect, useRef, useState } from "react";
+import { MAX_ITEMS } from "@/lib/domain/rules";
 import { useRouter } from "next/navigation";
 import { DateSlotPicker, type PickValue, type ShiftHint } from "@/components/DateSlotPicker";
 import { displayDate, endOf } from "@/lib/format";
 import { submitBooking } from "./actions";
 
-type Errors = Partial<Record<"customerName" | "phone" | "itemId" | "partySize" | "requiresDoctor" | "slot" | "agree" | "form", string>>;
+type Errors = Partial<Record<"customerName" | "phone" | "itemIds" | "partySize" | "requiresDoctor" | "slot" | "agree" | "form", string>>;
 
 const STEPS = ["客戶資料", "預約服務", "預約時間", "確認送出"];
 const ITEM_HINT: Record<string, string> = {
@@ -34,7 +35,9 @@ export function BookingWizard(props: {
   const [step, setStep] = useState(0);
   const [customerName, setName] = useState("");
   const [phone, setPhone] = useState("");
-  const [itemId, setItemId] = useState("");
+  const [itemIds, setItemIds] = useState<string[]>([]);
+  const toggleItem = (id: string) =>
+    setItemIds((cur) => (cur.includes(id) ? cur.filter((x) => x !== id) : cur.length >= MAX_ITEMS ? cur : [...cur, id]));
   const [partySize, setPartySize] = useState("1");
   const [requiresDoctor, setRequiresDoctor] = useState<boolean | null>(null);
   const [pick, setPick] = useState<PickValue>({ date: "", start: "", doctorId: null });
@@ -64,7 +67,7 @@ export function BookingWizard(props: {
       if (!/^0\d{8,9}$/.test(digits)) e.phone = "請填寫有效電話（手機 09 開頭或含區碼市話，可加分機）。";
     }
     if (s === 1) {
-      if (!itemId) e.itemId = "請選擇預約項目。";
+      if (itemIds.length === 0) e.itemIds = "請至少選擇一個預約項目。";
       if (!/^\d+$/.test(partySize) || Number(partySize) < 1) e.partySize = "人數需為 1 以上的整數。";
       if (requiresDoctor === null) e.requiresDoctor = "請選擇是否需要醫師。";
     }
@@ -89,7 +92,7 @@ export function BookingWizard(props: {
     setBusy(true);
     try {
       const r = await submitBooking(
-        { customerName, phone, itemId, partySize: Number(partySize), requiresDoctor: requiresDoctor === true, doctorId: pick.doctorId, date: pick.date, start: pick.start, preferredDoctorNote, careNote },
+        { customerName, phone, itemIds, partySize: Number(partySize), requiresDoctor: requiresDoctor === true, doctorId: pick.doctorId, date: pick.date, start: pick.start, preferredDoctorNote, careNote },
         idemKey.current, confirmDuplicate,
       );
       if (r.ok) { router.push(`/book/done/${r.id}`); return; }
@@ -101,7 +104,7 @@ export function BookingWizard(props: {
         setErrors({ slot: r.message });
         return;
       }
-      const map: Record<string, number> = { customerName: 0, phone: 0, itemId: 1, partySize: 1 };
+      const map: Record<string, number> = { customerName: 0, phone: 0, itemIds: 1, partySize: 1 };
       if ("field" in r && r.field && r.field in map) { setStep(map[r.field]); setErrors({ [r.field]: r.message }); return; }
       setErrors({ form: r.message });
     } catch {
@@ -111,7 +114,7 @@ export function BookingWizard(props: {
     }
   }
 
-  const item = props.items.find((i) => i.id === itemId);
+  const itemLabel = itemIds.map((id) => props.items.find((i) => i.id === id)?.name).filter(Boolean).join("、");
   const err = (k: keyof Errors) => errors[k] && <span className="fielderr" id={`err-${k}`}>{errors[k]}</span>;
 
   return (
@@ -161,17 +164,20 @@ export function BookingWizard(props: {
                 <div className="eyebrow">02 / Purpose of visit</div>
                 <h1 tabIndex={-1} ref={headingRef}>這次，想安排什麼服務？</h1>
               </div>
-              <fieldset className="fieldset" aria-invalid={!!errors.itemId}>
-                <legend>預約項目 <span className="req" style={{ color: "var(--brown)" }}>*</span></legend>
-                <div className="choices" role="radiogroup">
+              <fieldset className="fieldset" aria-invalid={!!errors.itemIds}>
+                <legend>預約項目 <span className="req" style={{ color: "var(--brown)" }}>*</span><span className="muted" style={{ fontSize: 12 }}>　可複選，最多 {MAX_ITEMS} 項{itemIds.length ? `（已選 ${itemIds.length} 項）` : ""}</span></legend>
+                <div className="choices" role="group" aria-label="預約項目（可複選）">
                   {props.items.map((i) => (
-                    <button type="button" key={i.id} className="choice" role="radio" aria-checked={itemId === i.id} onClick={() => setItemId(i.id)}>
+                    <button
+                      type="button" key={i.id} className="choice" role="checkbox" aria-checked={itemIds.includes(i.id)} onClick={() => toggleItem(i.id)}
+                      disabled={!itemIds.includes(i.id) && itemIds.length >= MAX_ITEMS}
+                    >
                       <strong>{i.name}</strong>
                       <small>{ITEM_HINT[i.name] ?? "預約服務"}</small>
                     </button>
                   ))}
                 </div>
-                {err("itemId")}
+                {err("itemIds")}
               </fieldset>
               <label className="field">
                 預約人數 <span className="req">*</span>
@@ -232,7 +238,7 @@ export function BookingWizard(props: {
                 {[
                   ["負責業務", props.salespersonName],
                   ["客戶", `${customerName}　${phone}`],
-                  ["預約項目", `${item?.name ?? ""}　${partySize} 人`],
+                  ["預約項目", `${itemLabel}　${partySize} 人`],
                   ["服務方式", requiresDoctor ? "需安排醫師" : "僅由護理師服務"],
                   ["日期時段", pick.date ? `${displayDate(pick.date)}　${pick.start}–${endOf(pick.start)}` : ""],
                   ...(requiresDoctor ? [["安排醫師", pick.doctorName ?? "依班表"]] : []),
@@ -278,7 +284,7 @@ export function BookingWizard(props: {
           <div className="serif">預約摘要</div>
           <div className="sumline"><small>負責業務</small>{props.salespersonName}</div>
           <div className="sumline"><small>客戶</small>{customerName || "尚未填寫"}</div>
-          <div className="sumline"><small>預約項目</small>{item ? `${item.name}・${partySize} 人` : "尚未選擇"}</div>
+          <div className="sumline"><small>預約項目</small>{itemLabel ? `${itemLabel}・${partySize} 人` : "尚未選擇"}</div>
           <div className="sumline"><small>服務方式</small>{requiresDoctor === null ? "尚未選擇" : requiresDoctor ? "需安排醫師" : "僅護理師"}</div>
           <div className="sumline"><small>預約時間</small>{pick.date && pick.start ? <>{displayDate(pick.date)}<br />{pick.start} – {endOf(pick.start)}</> : "尚未選擇"}</div>
           <div className="note">每次服務保留 60 分鐘，<br />讓每一次到訪都被好好安排。</div>

@@ -19,7 +19,7 @@ export default async function Overview({ searchParams }: PageProps<"/admin">) {
   const view = sp.view === "week" ? "week" : "day";
 
   const db = await pageRef();
-  const { doctorName, itemName, salespersonName } = namesOf(db);
+  const { doctorName, itemNames, salespersonName } = namesOf(db);
   const schedule = scheduleData(db);
   const opening = openingFor(schedule, date);
   const matches = (a: { salespersonId: string; requiresDoctor: boolean; status: string }) =>
@@ -112,7 +112,7 @@ export default async function Overview({ searchParams }: PageProps<"/admin">) {
         {view === "week" ? (
           <WeekView
             date={date} today={today} all={weekAll} visible={weekAll.filter(matches)} schedule={schedule}
-            names={{ itemName, doctorName, salespersonName }} dayHref={(d) => qs(d, "day")}
+            names={{ itemNames, doctorName, salespersonName }} dayHref={(d) => qs(d, "day")}
           />
         ) : !opening ? (
           <div className="hourcell closed"><p>本日休診，不開放預約。</p></div>
@@ -133,7 +133,7 @@ export default async function Overview({ searchParams }: PageProps<"/admin">) {
                   {list.map((a) => (
                     <div className="appt" key={a.id}>
                       <Link href={`/admin/appointments/${a.id}`} className="linkbtn" style={{ minHeight: 0, padding: 0, fontSize: 14 }}>{a.customerName}・{a.partySize} 人</Link>
-                      <div className="meta">{itemName(a.itemId)}・{a.requiresDoctor ? doctorName(a.assignedDoctorId) : "僅護理師"}・{salespersonName(a.salespersonId)}</div>
+                      <div className="meta">{itemNames(a.itemIds)}・{a.requiresDoctor ? doctorName(a.assignedDoctorId) : "僅護理師"}・{salespersonName(a.salespersonId)}</div>
                       <div className="row">
                         <span className={`badge ${STATUS_BADGE[a.status]}`}>{STATUS_LABEL[a.status]}</span>
                         {a.isOverbooked && <span className="badge sand">加開</span>}

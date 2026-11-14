@@ -1,5 +1,6 @@
 "use client";
 import { useRef, useState } from "react";
+import { ItemPicker } from "@/components/ItemPicker";
 import { useRouter } from "next/navigation";
 import { createByManager } from "./actions";
 
@@ -27,7 +28,7 @@ export function AdminCreateForm(props: {
     try {
       const r = await createByManager({
         salespersonId: String(f.get("salespersonId")), customerName: String(f.get("customerName")), phone: String(f.get("phone")),
-        itemId: String(f.get("itemId")), partySize: Number(f.get("partySize")), requiresDoctor, doctorId: String(f.get("doctorId") ?? "") || null,
+        itemIds: f.getAll("itemIds").map(String), partySize: Number(f.get("partySize")), requiresDoctor, doctorId: String(f.get("doctorId") ?? "") || null,
         date: String(f.get("date")), start: String(f.get("start")), preferredDoctorNote: String(f.get("preferredDoctorNote") ?? ""),
         careNote: String(f.get("careNote") ?? ""), overbookReason: String(f.get("overbookReason") ?? ""), acknowledgedWarnings: ack,
       }, key.current);
@@ -62,13 +63,8 @@ export function AdminCreateForm(props: {
         <label className="field">預約姓名 <span className="req">*</span><input name="customerName" required maxLength={50} aria-invalid={message?.field === "customerName"} /></label>
         <label className="field">聯絡電話 <span className="req">*</span><input name="phone" type="tel" required aria-invalid={message?.field === "phone"} /></label>
       </div>
+      <ItemPicker items={props.items} legend="預約項目 *" />
       <div className="two">
-        <label className="field">預約項目 <span className="req">*</span>
-          <select name="itemId" required defaultValue="">
-            <option value="" disabled>請選擇</option>
-            {props.items.map((i) => <option key={i.id} value={i.id}>{i.name}</option>)}
-          </select>
-        </label>
         <label className="field">人數 <span className="req">*</span><input name="partySize" inputMode="numeric" defaultValue={1} /></label>
       </div>
       <fieldset className="fieldset">

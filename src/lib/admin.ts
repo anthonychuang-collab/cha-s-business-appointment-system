@@ -4,7 +4,7 @@ import { sql, withTx, type Q } from "@/lib/data/db";
 import * as repo from "@/lib/data/repo";
 import type { Ref } from "@/lib/data/repo";
 import type { AuditLog, BlockRow, Doctor, DoctorShiftRow, NotifyEvent, NotifyMode, OpeningRow, Role, UserAccount } from "@/lib/data/types";
-import type { ScheduleData } from "@/lib/domain/schedule";
+import { openingRulesFromDays, summarizeOpenings, validateOpeningDays, type OpeningDay, type ScheduleData } from "@/lib/domain/schedule";
 import { hashPassword } from "@/lib/auth/password";
 import { revokeSessions } from "@/lib/auth/session";
 import { applyConflictRecompute, previewConflicts, scheduleData, todayTaipei } from "@/lib/booking";
@@ -75,7 +75,6 @@ const range = (from: string, to: string | null) => (to ? `${from}～${to}` : `${
 const shiftText = (ref: Ref, x: Omit<DoctorShiftRow, "id">) => `${doctorLabel(ref, x.doctorId)} ${WEEKDAY[x.weekday]} ${x.start}–${x.end}（${range(x.effectiveFrom, x.effectiveTo)}）`;
 const blockText = (ref: Ref, b: BlockRow) =>
   `${b.scope === "clinic" ? "全院封鎖" : `${doctorLabel(ref, b.doctorId)} 請假`} ${b.specificDate ?? `每${WEEKDAY[b.weekday ?? 0]}`} ${b.start}–${b.end}：${b.reason}`;
-const openingText = (o: Pick<OpeningRow, "weekdays" | "start" | "end">) => `${o.weekdays.map((w) => WEEKDAY[w]).join("、")} ${o.start}–${o.end}`;
 
 // ---------- 醫師與班表 ----------
 
@@ -162,18 +161,19 @@ export function removeBlock(actor: UserAccount, id: string): Promise<ScheduleOut
   });
 }
 
-export function saveOpening(actor: UserAccount, commit: boolean, o: { weekdays: number[]; start: string; end: string }): Promise<ScheduleOutcome> {
-  if (!TIME.test(o.start) || !TIME.test(o.end) || o.end <= o.start) return Promise.resolve({ ok: false, message: "結束時間需晚於開始時間。" });
-  if (o.start.slice(3) !== "00" || o.end.slice(3) !== "00") return Promise.resolve({ ok: false, message: "營業時間請設定為整點。" });
-  const weekdays = [...new Set(o.weekdays)].filter((w) => Number.isInteger(w) && w >= 1 && w <= 7).sort();
-  return scheduleChange(actor, commit, (ref) => {
-    const row: OpeningRow = { id: ref.openings[0]?.id ?? repo.newId(), weekdays, start: o.start, end: o.end, effectiveFrom: "2000-01-01", effectiveTo: null };
-    const before = ref.openings[0];
-    return {
-      next: { ...scheduleData(ref), openings: [row] }, write: (q) => repo.replaceOpening(q, row),
-      log: { entityType: "schedule", entityId: "opening", action: "opening-update", changes: { detail: before ? { from: openingText(before), to: openingText(row) } : openingText(row) } },
-    };
-  });
+/** 營業時間：每個星期各自設定（例如週一至週五 10–19、週六 10–17）；先預覽受影響預約再儲存 */
+export function saveOpening(actor: UserAccount, commit: boolean, days: OpeningDay[]): Promise<ScheduleOutcome> {
+  const bad = validateOpeningDays(days);
+  if (bad) return Promise.resolve({ ok: false, message: bad });
+  const rows: OpeningRow[] = openingRulesFromDays(days).map((r) => ({ ...r, id: repo.newId() }));
+  return scheduleChange(actor, commit, (ref) => ({
+    next: { ...scheduleData(ref), openings: rows },
+    write: (q) => repo.replaceOpenings(q, rows),
+    log: {
+      entityType: "schedule", entityId: "opening", action: "opening-update",
+      changes: { detail: ref.openings.length ? { from: summarizeOpenings(ref.openings), to: summarizeOpenings(rows) } : summarizeOpenings(rows) },
+    },
+  }));
 }
 
 // ---------- 預約項目 ----------

@@ -3,6 +3,7 @@ import { pageRef, todayTaipei } from "@/lib/booking";
 import { listAppointments } from "@/lib/data/repo";
 import { sql } from "@/lib/data/db";
 import { OCCUPYING_STATUSES } from "@/lib/domain/rules";
+import { openingHourRange } from "@/lib/domain/schedule";
 import { AdminHeader, Footer } from "@/components/Chrome";
 import { AdminCreateForm } from "../AdminCreateForm";
 
@@ -12,10 +13,8 @@ export default async function NewByManager({ searchParams }: PageProps<"/admin/n
   const date = /^\d{4}-\d{2}-\d{2}$/.test(String(sp.date)) ? String(sp.date) : todayTaipei();
   const start = /^\d{2}:00$/.test(String(sp.start)) ? String(sp.start) : "10:00";
   const db = await pageRef();
-  const opening = db.openings[0];
-  const from = opening ? Number(opening.start.slice(0, 2)) : 10;
-  const to = opening ? Number(opening.end.slice(0, 2)) : 19;
-  const hours = Array.from({ length: to - from }, (_, i) => `${String(from + i).padStart(2, "0")}:00`);
+  // 涵蓋所有營業日的時段（各星期時間不同時取最早～最晚）；實際是否在營業時間內由伺服器檢查
+  const hours = openingHourRange(db.openings).map((h) => `${String(h).padStart(2, "0")}:00`);
   const occupiedCount = (await listAppointments(sql(), { date, start })).filter((a) => OCCUPYING_STATUSES.includes(a.status)).length;
 
   return (

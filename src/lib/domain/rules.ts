@@ -43,7 +43,7 @@ export interface ExistingAppointment {
 
 export interface SalesChanges {
   time?: { date: string; start: string };
-  itemId?: string;
+  itemIds?: string[];
   requiresDoctor?: boolean;
   cancel?: true;
   salespersonId?: string;
@@ -79,7 +79,7 @@ export function checkSalesEdit(input: {
   const restricted: boolean[] = [
     c.time !== undefined && !inConflict,
     c.cancel !== undefined && !inConflict,
-    c.itemId !== undefined,
+    c.itemIds !== undefined,
     c.requiresDoctor !== undefined && !(inConflict && c.requiresDoctor === false),
   ];
   if (within4h && restricted.some(Boolean)) return { ok: false, reason: "WITHIN_4H" };
@@ -92,4 +92,29 @@ export function checkSalesEdit(input: {
   const basicFields: (keyof SalesChanges)[] = ["customerName", "phone", "careNote", "preferredDoctorNote", "partySize"];
   const touchesBasic = basicFields.some((k) => c[k] !== undefined);
   return { ok: true, notifyWithin4h: within4h && touchesBasic };
+}
+
+// ---------- 預約項目（可複選，2026-11-14 決策） ----------
+
+/** 一筆預約最多選幾個項目 */
+export const MAX_ITEMS = 5;
+
+export type ItemSelection = { ok: true; itemIds: string[] } | { ok: false; reason: "ITEM_REQUIRED" | "ITEM_TOO_MANY" | "ITEM_INVALID" };
+
+/**
+ * 檢查選擇的項目：去除空白與重複（保留順序），至少 1 項、最多 MAX_ITEMS 項，
+ * 每項都必須是啟用中的項目；原本就在這筆預約上的項目即使已停用也可保留。
+ */
+export function checkItemSelection(input: { selected: string[]; activeIds: string[]; alreadyOnAppointment?: string[] }): ItemSelection {
+  const ids = [...new Set(input.selected.map((s) => s.trim()).filter(Boolean))];
+  if (ids.length === 0) return { ok: false, reason: "ITEM_REQUIRED" };
+  if (ids.length > MAX_ITEMS) return { ok: false, reason: "ITEM_TOO_MANY" };
+  const allowed = new Set([...input.activeIds, ...(input.alreadyOnAppointment ?? [])]);
+  if (ids.some((id) => !allowed.has(id))) return { ok: false, reason: "ITEM_INVALID" };
+  return { ok: true, itemIds: ids };
+}
+
+/** 兩組項目是否相同（不計順序） */
+export function sameItems(a: string[], b: string[]): boolean {
+  return a.length === b.length && [...a].sort().join(",") === [...b].sort().join(",");
 }

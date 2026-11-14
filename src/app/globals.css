@@ -120,6 +120,22 @@ p { line-height: 1.9; }
 .choice[aria-pressed="true"]::after, .choice[aria-checked="true"]::after { content: "✓"; position: absolute; right: 12px; bottom: 10px; color: var(--brown); }
 .fieldset { border: 0; padding: 0; margin: 0 0 26px; }
 .fieldset legend { font-size: 13px; margin-bottom: 12px; padding: 0; }
+
+/* 營業時間（每個星期各自設定） */
+table.hours { min-width: 0; margin-bottom: 14px; }
+table.hours th, table.hours td { padding: 6px 8px; vertical-align: middle; border-bottom: 1px solid var(--line); }
+table.hours select { border: 1px solid var(--line); background: #fff; padding: 8px 10px; min-height: var(--tap); color: var(--ink); }
+
+/* 預約項目複選（表單用，ItemPicker） */
+.itempick { border: 0; padding: 0; margin: 0 0 18px; min-width: 0; }
+.itempick legend { font-size: 13px; margin-bottom: 10px; padding: 0; }
+.itempick legend small { margin-left: 8px; font-size: 11px; color: var(--muted); }
+.itempick-list { display: flex; flex-wrap: wrap; gap: 8px; }
+.itempick label { display: inline-flex; align-items: center; gap: 8px; min-height: var(--tap); padding: 0 14px; border: 1px solid var(--line); background: #fff; font-size: 14px; cursor: pointer; }
+.itempick label.on { border-color: var(--brown); background: #f4ede4; color: var(--brown); }
+.itempick input { accent-color: var(--brown); width: 16px; height: 16px; margin: 0; }
+.itempick input:disabled + * , .itempick label:has(input:disabled:not(:checked)) { opacity: .55; cursor: not-allowed; }
+.itempick[disabled] label { opacity: .7; cursor: not-allowed; }
 .stepper { display: flex; width: fit-content; align-items: center; border: 1px solid var(--line); margin-top: 9px; }
 .stepper button { width: var(--tap); height: var(--tap); border: 0; background: transparent; color: var(--brown); font-size: 18px; }
 .stepper input { width: 64px; text-align: center; border: 0; border-left: 1px solid var(--line); border-right: 1px solid var(--line); margin: 0; padding: 10px 4px; font-size: 16px; color: var(--ink); background: #fff; }

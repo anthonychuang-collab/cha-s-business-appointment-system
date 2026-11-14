@@ -16,7 +16,7 @@ import type { Ref } from "@/lib/data/repo";
 import type { Appointment, NotifyEvent, Role, UserAccount } from "@/lib/data/types";
 import type { ScheduleData } from "@/lib/domain/schedule";
 import { computeSlots, type Slot } from "@/lib/domain/slots";
-import { checkSalesCreate, checkSalesEdit, type SalesChanges } from "@/lib/domain/rules";
+import { checkItemSelection, checkSalesCreate, checkSalesEdit, MAX_ITEMS, sameItems, type SalesChanges } from "@/lib/domain/rules";
 import { checkAdminCreate } from "@/lib/domain/admin-create";
 import { evaluateConflict, recomputeConflicts, type ConflictChange } from "@/lib/domain/conflicts";
 import { normalizePhone } from "@/lib/domain/phone";
@@ -48,6 +48,8 @@ export function scheduleData(ref: Ref): ScheduleData {
 export function namesOf(ref: Ref) {
   return {
     itemName: (id: string) => ref.items.find((i) => i.id === id)?.name ?? "（已刪除項目）",
+    /** 複選項目顯示成「療程諮詢、疫苗」 */
+    itemNames: (ids: string[]) => ids.map((id) => ref.items.find((i) => i.id === id)?.name ?? "（已刪除項目）").join("、"),
     doctorName: (id: string | null) => (id ? ref.doctors.find((d) => d.id === id)?.displayName ?? "—" : "—"),
     salespersonName: (id: string) => ref.salespeople.find((s) => s.id === id)?.displayName ?? "—",
     userName: (id: string) => ref.users.find((u) => u.id === id)?.displayName ?? "系統",
@@ -164,7 +166,8 @@ async function bookingTx<T>(fn: (c: Ctx) => Promise<T>): Promise<T> {
 export interface BookingInput {
   customerName: string;
   phone: string;
-  itemId: string;
+  /** 可複選，依選擇順序 */
+  itemIds: string[];
   partySize: number;
   requiresDoctor: boolean;
   doctorId: string | null;
@@ -185,9 +188,18 @@ function validateBasics(i: Pick<BookingInput, "customerName" | "phone" | "partyS
   return null;
 }
 
-function validateItem(ref: Ref, itemId: string): Fail | null {
-  return ref.items.some((i) => i.id === itemId && i.active) ? null : fail("FIELD", "請選擇預約項目。", "itemId");
+const ITEM_MESSAGE = {
+  ITEM_REQUIRED: "請至少選擇一個預約項目。",
+  ITEM_TOO_MANY: `預約項目最多選 ${MAX_ITEMS} 個。`,
+  ITEM_INVALID: "選擇的項目已停用或不存在，請重新選擇。",
+} as const;
+
+/** 檢查並整理選擇的項目（規則在 domain/rules.ts）；原本就在預約上的停用項目可保留 */
+function pickItems(ref: Ref, selected: string[], alreadyOnAppointment: string[] = []): string[] | Fail {
+  const r = checkItemSelection({ selected, activeIds: ref.items.filter((i) => i.active).map((i) => i.id), alreadyOnAppointment });
+  return r.ok ? r.itemIds : fail("FIELD", ITEM_MESSAGE[r.reason], "itemIds");
 }
+const isFailOf = (x: string[] | Fail): x is Fail => !Array.isArray(x);
 
 function validateSlotInput(date: string, start: string): Fail | null {
   if (!DATE.test(date) || Number.isNaN(Date.parse(date))) return fail("FIELD", "請選擇日期。", "start");
@@ -220,8 +232,10 @@ export function createSalesAppointment(actor: UserAccount, salespersonId: string
     const done = await repo.findIdempotent(c.q, idemKey);
     if (done) return { ok: true, id: done };
 
-    const bad = validateBasics(input) ?? validateItem(c.ref, input.itemId) ?? validateSlotInput(input.date, input.start);
+    const bad = validateBasics(input) ?? validateSlotInput(input.date, input.start);
     if (bad) return bad;
+    const itemIds = pickItems(c.ref, input.itemIds);
+    if (isFailOf(itemIds)) return itemIds;
 
     const rule = checkSalesCreate({ now: new Date(), date: input.date, start: input.start, maxDays: c.ref.settings.maxDays });
     if (!rule.ok) return fail(rule.reason, undefined, "start");
@@ -242,7 +256,7 @@ export function createSalesAppointment(actor: UserAccount, salespersonId: string
     const a: Appointment = {
       id: repo.newId(), code: await newCode(c, input.date),
       customerName: input.customerName.trim(), phone: input.phone.trim(), phoneNormalized: normalizePhone(input.phone),
-      date: input.date, start: input.start, end: endOf(input.start), itemId: input.itemId, partySize: input.partySize,
+      date: input.date, start: input.start, end: endOf(input.start), itemIds, partySize: input.partySize,
       requiresDoctor: input.requiresDoctor, assignedDoctorId: doctor,
       preferredDoctorNote: input.preferredDoctorNote.trim(), careNote: input.careNote.trim(),
       salespersonId, status: "active", isOverbooked: false, overbookReason: "",
@@ -269,15 +283,18 @@ export function updateSalesAppointment(actor: UserAccount, salespersonId: string
     const a = { ...found };
 
     const { doctorId, ...ruleChanges } = changes;
+    // 項目與原本相同（只是順序不同或沒改）就不算變更，不觸發 4 小時限制
+    if (ruleChanges.itemIds !== undefined && sameItems(ruleChanges.itemIds, found.itemIds)) delete ruleChanges.itemIds;
     if (ruleChanges.customerName !== undefined || ruleChanges.phone !== undefined || ruleChanges.partySize !== undefined) {
       const bad = validateBasics({
         customerName: ruleChanges.customerName ?? a.customerName, phone: ruleChanges.phone ?? a.phone, partySize: ruleChanges.partySize ?? a.partySize,
       });
       if (bad) return bad;
     }
-    if (ruleChanges.itemId !== undefined) {
-      const bad = validateItem(c.ref, ruleChanges.itemId);
-      if (bad) return bad;
+    if (ruleChanges.itemIds !== undefined) {
+      const picked = pickItems(c.ref, ruleChanges.itemIds, found.itemIds);
+      if (isFailOf(picked)) return picked;
+      ruleChanges.itemIds = picked;
     }
     if (ruleChanges.time) {
       const bad = validateSlotInput(ruleChanges.time.date, ruleChanges.time.start);
@@ -321,7 +338,7 @@ export function updateSalesAppointment(actor: UserAccount, salespersonId: string
         }
       }
       a.requiresDoctor = newRequires;
-      if (ruleChanges.itemId !== undefined) a.itemId = ruleChanges.itemId;
+      if (ruleChanges.itemIds !== undefined) a.itemIds = ruleChanges.itemIds;
       if (ruleChanges.customerName !== undefined) a.customerName = ruleChanges.customerName.trim();
       if (ruleChanges.phone !== undefined) { a.phone = ruleChanges.phone.trim(); a.phoneNormalized = normalizePhone(ruleChanges.phone); }
       if (ruleChanges.partySize !== undefined) a.partySize = ruleChanges.partySize;
@@ -373,8 +390,10 @@ export function createAdminAppointment(actor: UserAccount, input: AdminCreateInp
     await repo.lockKey(c.q, `idem:${idemKey}`);
     const done = await repo.findIdempotent(c.q, idemKey);
     if (done) return { ok: true, id: done };
-    const bad = validateBasics(input) ?? validateItem(c.ref, input.itemId) ?? validateSlotInput(input.date, input.start);
+    const bad = validateBasics(input) ?? validateSlotInput(input.date, input.start);
     if (bad) return bad;
+    const itemIds = pickItems(c.ref, input.itemIds);
+    if (isFailOf(itemIds)) return itemIds;
     if (!c.ref.salespeople.some((s) => s.id === input.salespersonId && s.active)) return fail("FIELD", "請選擇負責業務。", "salespersonId");
 
     await repo.lockSlot(c.q, input.date, input.start);
@@ -392,7 +411,7 @@ export function createAdminAppointment(actor: UserAccount, input: AdminCreateInp
     const a: Appointment = {
       id: repo.newId(), code: await newCode(c, input.date),
       customerName: input.customerName.trim(), phone: input.phone.trim(), phoneNormalized: normalizePhone(input.phone),
-      date: input.date, start: input.start, end: endOf(input.start), itemId: input.itemId, partySize: input.partySize,
+      date: input.date, start: input.start, end: endOf(input.start), itemIds, partySize: input.partySize,
       requiresDoctor: input.requiresDoctor, assignedDoctorId: r.assignedDoctorId,
       preferredDoctorNote: input.preferredDoctorNote.trim(), careNote: input.careNote.trim(),
       salespersonId: input.salespersonId, status: "active", isOverbooked: r.isOverbooked, overbookReason: r.isOverbooked ? input.overbookReason.trim() : "",
@@ -544,17 +563,19 @@ export function adminReschedule(actor: UserAccount, id: string, version: number,
 }
 
 /** 店長修改客戶資料、人數、備註、項目（不受時間限制，但已取消者不可） */
-export function adminUpdateBasics(actor: UserAccount, id: string, version: number, v: { customerName: string; phone: string; partySize: number; itemId: string; careNote: string; preferredDoctorNote: string }): Promise<EditResult> {
+export function adminUpdateBasics(actor: UserAccount, id: string, version: number, v: { customerName: string; phone: string; partySize: number; itemIds: string[]; careNote: string; preferredDoctorNote: string }): Promise<EditResult> {
   return bookingTx(async (c): Promise<EditResult> => {
     const found = await lockForManager(c, id, version);
     if (isFail(found)) return found;
     if (found.status === "cancelled") return fail("NOT_ACTIVE");
-    const bad = validateBasics(v) ?? (v.itemId !== found.itemId ? validateItem(c.ref, v.itemId) : null);
+    const bad = validateBasics(v);
     if (bad) return bad;
+    const itemIds = pickItems(c.ref, v.itemIds, found.itemIds);
+    if (isFailOf(itemIds)) return itemIds;
     const a: Appointment = {
       ...found,
       customerName: v.customerName.trim(), phone: v.phone.trim(), phoneNormalized: normalizePhone(v.phone), partySize: v.partySize,
-      itemId: v.itemId, careNote: v.careNote.trim(), preferredDoctorNote: v.preferredDoctorNote.trim(),
+      itemIds, careNote: v.careNote.trim(), preferredDoctorNote: v.preferredDoctorNote.trim(),
       updatedBy: actor.id, updatedAt: new Date().toISOString(), version: found.version + 1,
     };
     await save(c, a, version);

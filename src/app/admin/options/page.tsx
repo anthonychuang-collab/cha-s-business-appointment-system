@@ -2,6 +2,7 @@ import { requireUser } from "@/lib/auth/session";
 import { pageRef } from "@/lib/booking";
 import { itemsInUse } from "@/lib/admin";
 import { WEEKDAY_LABEL } from "@/lib/format";
+import { openingDaysOf, summarizeOpenings } from "@/lib/domain/schedule";
 import type { NotifyEvent } from "@/lib/data/types";
 import { AdminHeader, Footer } from "@/components/Chrome";
 import { ActionForm, PreviewForm } from "@/components/ActionForm";
@@ -20,7 +21,8 @@ export default async function OptionsPage() {
   const db = await pageRef();
   const items = [...db.items].sort((a, b) => a.sortOrder - b.sortOrder);
   const used = await itemsInUse();
-  const opening = db.openings[0];
+  const openDays = new Map(openingDaysOf(db.openings).map((d) => [d.weekday, d]));
+  const HOURS = Array.from({ length: 17 }, (_, i) => `${String(i + 7).padStart(2, "0")}:00`); // 07:00–23:00
   const st = db.settings;
 
   return (
@@ -63,24 +65,26 @@ export default async function OptionsPage() {
           <section>
             <div className="panel">
               <h3>營業時間</h3>
+              <p className="muted" style={{ marginTop: 0 }}>目前：{summarizeOpenings(db.openings) || "未設定"}</p>
               <PreviewForm action={saveOpeningAction}>
-                <fieldset className="fieldset">
-                  <legend>營業日</legend>
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 14px" }}>
-                    {[1, 2, 3, 4, 5, 6, 7].map((w) => (
-                      <label key={w} className="check" style={{ marginTop: 0 }}>
-                        <input type="checkbox" name="weekdays" value={w} defaultChecked={opening?.weekdays.includes(w)} />{WEEKDAY_LABEL[w]}
-                      </label>
-                    ))}
-                  </div>
-                </fieldset>
-                <div className="two">
-                  <label className="field">開始<input type="time" name="start" step={3600} defaultValue={opening?.start ?? "10:00"} /></label>
-                  <label className="field">結束<input type="time" name="end" step={3600} defaultValue={opening?.end ?? "19:00"} /></label>
-                </div>
-                <div className="sumline"><small>每筆預約</small>60 分鐘，整點開始</div>
+                <table className="hours">
+                  <thead><tr><th>星期</th><th>營業</th><th>開始</th><th>結束</th></tr></thead>
+                  <tbody>
+                    {[1, 2, 3, 4, 5, 6, 7].map((w) => {
+                      const d = openDays.get(w);
+                      return (
+                        <tr key={w}>
+                          <td>{WEEKDAY_LABEL[w]}</td>
+                          <td><label className="check" style={{ margin: 0 }}><input type="checkbox" name={`open_${w}`} value="1" defaultChecked={!!d} aria-label={`${WEEKDAY_LABEL[w]}營業`} /></label></td>
+                          <td><select name={`start_${w}`} defaultValue={d?.start ?? "10:00"} aria-label={`${WEEKDAY_LABEL[w]}開始`}>{HOURS.slice(0, -1).map((h) => <option key={h}>{h}</option>)}</select></td>
+                          <td><select name={`end_${w}`} defaultValue={d?.end ?? "19:00"} aria-label={`${WEEKDAY_LABEL[w]}結束`}>{HOURS.slice(1).map((h) => <option key={h}>{h}</option>)}</select></td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+                <div className="sumline"><small>每筆預約</small>60 分鐘，整點開始。沒勾「營業」的星期為休診。</div>
               </PreviewForm>
-              <div className="note">官網頁尾寫週六營業至 17:00，本系統依指定設為 19:00。正式上線前請統一對外資訊。</div>
             </div>
 
             <div className="panel" style={{ marginTop: 20 }}>
